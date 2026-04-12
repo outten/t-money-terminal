@@ -1,0 +1,23 @@
+<h2>Recommendations</h2>
+<p class="subtitle">Buy / Sell / Hold signals based on SMA crossover and RSI analysis</p>
+
+<div class="disclaimer">
+  ⚠️ <strong>Disclaimer:</strong> Recommendations are for informational purposes only. Not financial advice. Always do your own research.
+</div>
+
+<table class="summary-table">
+  <thead>
+    <tr><th>Symbol</th><th>Region</th><th>Price</th><th>Signal</th><th>Rationale</th></tr>
+  </thead>
+  <tbody>
+    <% @recommendations.each do |r| %>
+    <tr>
+      <td><strong><%= r[:symbol] %></strong></td>
+      <td><%= r[:region] %></td>
+      <td><%= r[:price] %></td>
+      <td><span class="signal signal-<%= r[:signal].downcase %>"><%= r[:signal] %></span></td>
+      <td><small><%= r[:rationale] %></small></td>
+    </tr>
+    <% end %>
+  </tbody>
+</table>

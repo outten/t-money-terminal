@@ -1,0 +1,38 @@
+<h2>Japan Markets</h2>
+<p class="subtitle">Japan — EWJ (iShares MSCI Japan ETF proxy)</p>
+<% if @data[:stale] %>
+  <div class="notice">Data may be delayed — last updated: <%= @data[:updated_at] %></div>
+<% end %>
+
+<table class="summary-table">
+  <thead>
+    <tr><th>Symbol</th><th>Price</th><th>Change</th><th>Volume</th></tr>
+  </thead>
+  <tbody>
+    <% @data[:quotes].each do |q| %>
+    <tr>
+      <td><strong><%= q[:symbol] %></strong></td>
+      <td><%= q[:price] %></td>
+      <td class="<%= q[:change].to_f >= 0 ? 'positive' : 'negative' %>"><%= q[:change] %></td>
+      <td><%= q[:volume] %></td>
+    </tr>
+    <% end %>
+  </tbody>
+</table>
+
+<div class="chart-row">
+  <div class="chart-box">
+    <h3>Price History</h3>
+    <canvas id="priceChart"></canvas>
+  </div>
+  <div class="chart-box">
+    <h3>Volume</h3>
+    <canvas id="volumeChart"></canvas>
+  </div>
+</div>
+
+<script>
+  const marketData = <%= @data[:quotes].to_json %>;
+  renderPriceChart('priceChart', marketData);
+  renderVolumeChart('volumeChart', marketData);
+</script>

@@ -1,0 +1,31 @@
+<h2>Dashboard</h2>
+<p class="subtitle">Global market overview</p>
+
+<table class="summary-table">
+  <thead>
+    <tr><th>Symbol</th><th>Region</th><th>Price</th><th>Change</th><th>Signal</th></tr>
+  </thead>
+  <tbody>
+    <% @data[:quotes].each do |q| %>
+    <tr>
+      <td><strong><%= q[:symbol] %></strong></td>
+      <td><%= q[:region] %></td>
+      <td><%= q[:price] %></td>
+      <td class="<%= q[:change].to_f >= 0 ? 'positive' : 'negative' %>"><%= q[:change] %></td>
+      <td><span class="signal signal-<%= q[:signal].downcase %>"><%= q[:signal] %></span></td>
+    </tr>
+    <% end %>
+  </tbody>
+</table>
+
+<div class="chart-row">
+  <div class="chart-box">
+    <h3>Price Overview</h3>
+    <canvas id="dashboardChart"></canvas>
+  </div>
+</div>
+
+<script>
+  const dashData = <%= @data[:quotes].to_json %>;
+  renderSummaryChart('dashboardChart', dashData);
+</script>
