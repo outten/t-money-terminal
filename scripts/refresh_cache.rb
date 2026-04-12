@@ -92,6 +92,7 @@ puts "  Cache   : #{MarketDataService::CACHE_FILE}"
 puts
 
 say 'Checking API keys…', level: :section
+tiingo_ok  = check_key('TIINGO_API_KEY')
 av_ok      = check_key('ALPHA_VANTAGE_API_KEY')
 finnhub_ok = check_key('FINNHUB_API_KEY')
 puts
@@ -182,15 +183,31 @@ puts
 # ── Phase 4: Historical Price Data ───────────────────────────────────────────
 
 say 'Phase 4 — Historical Price Data', level: :section
-say "Strategy: Yahoo Finance (crumb auth) → Alpha Vantage TIME_SERIES_WEEKLY"
+say "Strategy: Tiingo (primary) → Yahoo Finance (crumb auth) → Alpha Vantage TIME_SERIES_WEEKLY"
 say "AV efficiency: one API call per symbol populates all 6 period caches"
-say "Rate limit: #{AV_SLEEP}s pause after each AV call"
+say "Rate limit: #{AV_SLEEP}s pause after each AV call (Tiingo has no per-call rate limit concern)"
 puts
 
 target_symbols.each_with_index do |symbol, i|
   say "#{symbol}: fetching historical data for all periods (#{HISTORICAL_PERIODS.join(', ')})…"
 
-  # First try Yahoo Finance for 1y (most likely to be populated)
+  if tiingo_ok
+    results = MarketDataService.prefetch_all_historical(symbol)
+    fetched = results.count { |_, v| v && !v.empty? }
+    if fetched > 0
+      say "#{symbol}: Tiingo populated #{fetched}/#{HISTORICAL_PERIODS.length} period caches", level: :ok
+      HISTORICAL_PERIODS.each do |period|
+        pts = results[period]
+        pts ? say("  #{period.upcase}: #{pts.length} points", level: :ok) : say("  #{period.upcase}: no data", level: :skip)
+      end
+      puts
+      next
+    else
+      say "#{symbol}: Tiingo returned no data — falling back to Yahoo/AV", level: :warn
+    end
+  end
+
+  # Tiingo unavailable — try Yahoo Finance for 1y (most likely to be populated)
   yahoo_result = MarketDataService.historical(symbol, '1y')
   if yahoo_result && !yahoo_result.empty?
     say "#{symbol}: Yahoo returned #{yahoo_result.length} data points for 1y", level: :ok

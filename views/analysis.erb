@@ -77,6 +77,11 @@
     </div>
   </div>
   <p class="data-source">Source: Finnhub</p>
+  <% if @profile[:weburl] && !@profile[:weburl].to_s.strip.empty? %>
+  <div class="profile-homepage">
+    <a href="<%= @profile[:weburl] %>" target="_blank" rel="noopener noreferrer" class="ext-link">Website &rarr;</a>
+  </div>
+  <% end %>
   <% else %>
   <p class="no-data">No profile data available for this symbol.</p>
   <% end %>
@@ -130,7 +135,7 @@
 </section>
 
 <script>
-  (function() {
+  window.addEventListener('load', function() {
     const initialData = <%= (@historical || []).to_json %>;
     const labels = initialData.map(function(d) { return d.date; });
     const prices  = initialData.map(function(d) { return d.close; });
@@ -151,5 +156,5 @@
           });
       });
     });
-  })();
+  });
 </script>

@@ -11,9 +11,9 @@
     <span class="logo">T Money Terminal</span>
     <nav>
       <a href="/dashboard" class="<%= request.path_info == '/dashboard' || request.path_info == '/' ? 'active' : '' %>">Dashboard</a>
-      <a href="/us" class="<%= request.path_info == '/us' ? 'active' : '' %>">US Markets</a>
-      <a href="/japan" class="<%= request.path_info == '/japan' ? 'active' : '' %>">Japan</a>
-      <a href="/europe" class="<%= request.path_info == '/europe' ? 'active' : '' %>">Europe</a>
+      <a href="/region/us" class="<%= %w[/us /region/us].include?(request.path_info) ? 'active' : '' %>">US Markets</a>
+      <a href="/region/japan" class="<%= %w[/japan /region/japan].include?(request.path_info) ? 'active' : '' %>">Japan</a>
+      <a href="/region/europe" class="<%= %w[/europe /region/europe].include?(request.path_info) ? 'active' : '' %>">Europe</a>
     </nav>
     <button id="theme-toggle" onclick="toggleTheme()">🌙 Dark</button>
   </header>

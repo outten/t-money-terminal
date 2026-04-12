@@ -13,15 +13,24 @@ class MarketDataService
   CACHE_FILE = File.expand_path('../../tmp/market_cache.json', __FILE__).freeze
 
   REGIONS = {
-    us:     %w[SPY AAPL MSFT],
-    japan:  %w[EWJ],
-    europe: %w[VGK]
+    us:     %w[SPY QQQ AAPL MSFT GOOGL AMZN NVDA JPM],
+    japan:  %w[EWJ TM SONY],
+    europe: %w[VGK ASML SAP BP]
   }.freeze
 
   REGION_LABEL = { us: 'US', japan: 'Japan', europe: 'Europe' }.freeze
 
+  # Known ETF/fund symbols — hardcoded type takes precedence over API data
+  SYMBOL_TYPES = {
+    'SPY' => 'ETF',
+    'QQQ' => 'ETF',
+    'EWJ' => 'ETF',
+    'VGK' => 'ETF'
+  }.freeze
+
   ETF_PROFILES = {
     'SPY' => { name: 'SPDR S&P 500 ETF Trust', description: 'Tracks the S&P 500 index, representing 500 of the largest U.S. publicly traded companies. Managed by State Street Global Advisors.', exchange: 'NYSE Arca', industry: 'ETF — U.S. Large Blend', ticker: 'SPY' },
+    'QQQ' => { name: 'Invesco QQQ Trust', description: 'Tracks the Nasdaq-100 Index, providing exposure to 100 of the largest non-financial companies listed on the Nasdaq. Managed by Invesco.', exchange: 'Nasdaq', industry: 'ETF — U.S. Tech Large Blend', ticker: 'QQQ' },
     'EWJ' => { name: 'iShares MSCI Japan ETF', description: 'Tracks the MSCI Japan Index, providing broad exposure to large and mid-cap Japanese equities. Managed by BlackRock.', exchange: 'NYSE Arca', industry: 'ETF — Japan Equities', ticker: 'EWJ' },
     'VGK' => { name: 'Vanguard FTSE Europe ETF', description: 'Tracks the FTSE Developed Europe All Cap Index, providing exposure to stocks in major European markets. Managed by Vanguard.', exchange: 'NYSE Arca', industry: 'ETF — Europe Equities', ticker: 'VGK' }
   }.freeze
@@ -37,10 +46,20 @@ class MarketDataService
 
   MOCK_PRICES = {
     'SPY'  => { price: '520.00', change: '+1.2%', volume: '82000000' },
+    'QQQ'  => { price: '448.50', change: '+1.0%', volume: '45000000' },
     'AAPL' => { price: '185.50', change: '-0.5%', volume: '55000000' },
     'MSFT' => { price: '415.75', change: '+0.8%', volume: '22000000' },
+    'GOOGL' => { price: '170.20', change: '+0.4%', volume: '24000000' },
+    'AMZN' => { price: '200.10', change: '+0.9%', volume: '35000000' },
+    'NVDA' => { price: '875.00', change: '+2.1%', volume: '48000000' },
+    'JPM'  => { price: '210.30', change: '+0.3%', volume: '10000000' },
     'EWJ'  => { price: '72.10',  change: '+0.3%', volume: '4500000' },
-    'VGK'  => { price: '69.40',  change: '+0.6%', volume: '2100000' }
+    'TM'   => { price: '198.40', change: '-0.2%', volume: '1200000' },
+    'SONY' => { price: '88.60',  change: '+0.5%', volume: '900000' },
+    'VGK'  => { price: '69.40',  change: '+0.6%', volume: '2100000' },
+    'ASML' => { price: '768.50', change: '+1.3%', volume: '800000' },
+    'SAP'  => { price: '218.90', change: '+0.2%', volume: '1100000' },
+    'BP'   => { price: '37.80',  change: '-0.4%', volume: '7500000' }
   }.freeze
 
   @cache            = {}
@@ -124,10 +143,60 @@ class MarketDataService
       fetch_historical(symbol, period)
     end
 
-    # Fetch AV weekly data ONCE and populate all period caches from it.
+    # Fetch all historical periods for a symbol efficiently.
+    # Tiingo: one call fetching 5y of daily data, sliced into all 6 period caches.
+    # Falls back to a single AV TIME_SERIES_WEEKLY call sliced the same way.
     # Returns a hash { period => points_array_or_nil } for each period.
-    # Used by the refresh script to be API-efficient (1 AV call per symbol).
+    # Used by the refresh script.
     def prefetch_all_historical(symbol)
+      # Tiingo: one call for 5y of daily EOD data, slice into all periods locally
+      if ENV['TIINGO_API_KEY']
+        api_key    = ENV['TIINGO_API_KEY']
+        start_date = Date.today - (5 * 366)
+        url = URI("https://api.tiingo.com/tiingo/daily/#{symbol}/prices" \
+                  "?startDate=#{start_date}&resampleFreq=daily&token=#{api_key}")
+        req = Net::HTTP::Get.new(url)
+        req['Content-Type'] = 'application/json'
+        res = Net::HTTP.start(url.host, url.port, use_ssl: true, read_timeout: 15, open_timeout: 5) { |http| http.request(req) }
+
+        if res.is_a?(Net::HTTPSuccess)
+          data = JSON.parse(res.body)
+          if data.is_a?(Array) && !data.empty?
+            all_points = data.filter_map { |row|
+              date  = row['date']&.slice(0, 10)
+              close = row['adjClose'] || row['close']
+              next unless date && close
+              { date: date, close: close.to_f.round(2) }
+            }.sort_by { |p| p[:date] }
+
+            today   = Date.today
+            cutoffs = {
+              '1d'  => today - 1,
+              '1m'  => today - 30,
+              '3m'  => today - 90,
+              'ytd' => Date.new(today.year, 1, 1),
+              '1y'  => today - 365,
+              '5y'  => today - (5 * 365)
+            }
+
+            results = {}
+            cutoffs.each do |period, cutoff|
+              points = all_points.select { |p| Date.parse(p[:date]) >= cutoff }
+              if points.any?
+                store_cache("candle:#{symbol}:#{period}", points)
+                results[period] = points
+              else
+                results[period] = nil
+              end
+            end
+            return results if results.values.any?
+          end
+        else
+          warn "[MarketDataService] Tiingo prefetch returned HTTP #{res.code} for #{symbol}" unless test_env?
+        end
+      end
+
+      # Fall back to single AV TIME_SERIES_WEEKLY call
       api_key = ENV['ALPHA_VANTAGE_API_KEY']
       return {} unless api_key
 
@@ -169,6 +238,19 @@ class MarketDataService
       {}
     end
 
+    def symbol_type(symbol)
+      return SYMBOL_TYPES[symbol] if SYMBOL_TYPES.key?(symbol)
+
+      # Fall back to cached Finnhub profile type field (no extra API call)
+      profile = @cache["profile:#{symbol}"] || @persistent_cache["profile:#{symbol}"]
+      if profile && profile[:finnhub_type]
+        type_map = { 'EQS' => 'Equity', 'ETF' => 'ETF', 'ADR' => 'ADR', 'FUND' => 'Fund' }
+        return type_map[profile[:finnhub_type]] || profile[:finnhub_type]
+      end
+
+      'Equity'
+    end
+
     def region(name)
       symbols = REGIONS[name] || []
       quotes = symbols.map { |s| enrich_quote(s, REGION_LABEL[name]) }
@@ -191,7 +273,8 @@ class MarketDataService
       change = data['10. change percent'] || data[:change] || MOCK_PRICES.dig(symbol, :change) || 'N/A'
       volume = data['06. volume']         || data[:volume] || MOCK_PRICES.dig(symbol, :volume) || 'N/A'
       signal = begin; RecommendationService.signal_for(symbol); rescue; 'HOLD'; end
-      { symbol: symbol, region: region, price: price, change: change, volume: volume, signal: signal }
+      type   = symbol_type(symbol)
+      { symbol: symbol, region: region, price: price, change: change, volume: volume, signal: signal, type: type }
     end
 
     def fetch_quote(symbol)
@@ -351,15 +434,16 @@ class MarketDataService
       end
 
       result = {
-        name:        data['name'],
-        description: data['description'] || "#{data['name']} (#{symbol})",
-        exchange:    data['exchange'],
-        industry:    data['finnhubIndustry'],
-        market_cap:  data['marketCapitalization'],
-        ipo:         data['ipo'],
-        logo:        data['logo'],
-        weburl:      data['weburl'],
-        ticker:      symbol,
+        name:          data['name'],
+        description:   data['description'] || "#{data['name']} (#{symbol})",
+        exchange:      data['exchange'],
+        industry:      data['finnhubIndustry'],
+        market_cap:    data['marketCapitalization'],
+        ipo:           data['ipo'],
+        logo:          data['logo'],
+        weburl:        data['weburl'],
+        finnhub_type:  data['type'],
+        ticker:        symbol,
         source: 'Finnhub'
       }
       store_cache(key, result)
@@ -374,8 +458,9 @@ class MarketDataService
       return @cache[key] if @cache[key]
 
       range_cfg = YAHOO_RANGE_MAP[period] || YAHOO_RANGE_MAP['1y']
-      # Yahoo crumb auth primary; Alpha Vantage TIME_SERIES_WEEKLY secondary
-      result = fetch_historical_from_yahoo(symbol, range_cfg) ||
+      # Tiingo primary; Yahoo crumb auth secondary; Alpha Vantage TIME_SERIES_WEEKLY tertiary
+      result = fetch_historical_from_tiingo(symbol, period) ||
+               fetch_historical_from_yahoo(symbol, range_cfg) ||
                fetch_historical_from_alpha_vantage(symbol, period)
 
       if result
@@ -389,6 +474,49 @@ class MarketDataService
         return @persistent_cache[key]
       end
 
+      nil
+    end
+
+    def fetch_historical_from_tiingo(symbol, period)
+      api_key = ENV['TIINGO_API_KEY']
+      return nil unless api_key
+
+      today  = Date.today
+      start_date = case period
+                   when '1d'  then today - 5      # go back a few days; slice to last 1-2 points
+                   when '1m'  then today - 31
+                   when '3m'  then today - 92
+                   when 'ytd' then Date.new(today.year, 1, 1)
+                   when '1y'  then today - 366
+                   when '5y'  then today - (5 * 366)
+                   else            today - 366
+                   end
+
+      url = URI("https://api.tiingo.com/tiingo/daily/#{symbol}/prices" \
+                "?startDate=#{start_date}&resampleFreq=daily&token=#{api_key}")
+      req = Net::HTTP::Get.new(url)
+      req['Content-Type'] = 'application/json'
+
+      res = Net::HTTP.start(url.host, url.port, use_ssl: true, read_timeout: 10, open_timeout: 5) { |http| http.request(req) }
+
+      unless res.is_a?(Net::HTTPSuccess)
+        warn "[MarketDataService] Tiingo returned HTTP #{res.code} for #{symbol}" unless test_env?
+        return nil
+      end
+
+      data = JSON.parse(res.body)
+      return nil unless data.is_a?(Array) && !data.empty?
+
+      points = data.filter_map do |row|
+        date  = row['date']&.slice(0, 10)
+        close = row['adjClose'] || row['close']
+        next unless date && close
+        { date: date, close: close.to_f.round(2) }
+      end.sort_by { |p| p[:date] }
+
+      points.empty? ? nil : points
+    rescue StandardError => e
+      warn "[MarketDataService] Tiingo historical fetch failed for #{symbol}: #{e.message}" unless test_env?
       nil
     end
 

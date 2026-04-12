@@ -1,0 +1,24 @@
+<table class="summary-table">
+  <thead>
+    <tr>
+      <th>Symbol</th>
+      <th>Type</th>
+      <th>Region</th>
+      <th>Price</th>
+      <th>Change</th>
+      <th>Signal</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% quotes.each do |q| %>
+    <tr>
+      <td><strong><a href="/analysis/<%= q[:symbol] %>"><%= q[:symbol] %></a></strong></td>
+      <td><span class="type-badge type-<%= q[:type].to_s.downcase.gsub(/[^a-z0-9]/, '-') %>"><%= q[:type] %></span></td>
+      <td><a href="/region/<%= q[:region].to_s.downcase %>" class="region-link"><%= q[:region] %></a></td>
+      <td><%= q[:price] %></td>
+      <td class="<%= q[:change].to_f >= 0 ? 'positive' : 'negative' %>"><%= q[:change] %></td>
+      <td><span class="signal signal-<%= q[:signal].downcase %>"><%= q[:signal] %></span></td>
+    </tr>
+    <% end %>
+  </tbody>
+</table>

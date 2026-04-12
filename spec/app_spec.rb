@@ -84,6 +84,31 @@ RSpec.describe TMoneyTerminal do
     end
   end
 
+  describe 'GET /region/:name' do
+    it 'loads the US region page' do
+      get '/region/us'
+      expect(last_response).to be_ok
+      expect(last_response.body).to include('US')
+    end
+
+    it 'loads the Japan region page' do
+      get '/region/japan'
+      expect(last_response).to be_ok
+      expect(last_response.body).to include('Japan')
+    end
+
+    it 'loads the Europe region page' do
+      get '/region/europe'
+      expect(last_response).to be_ok
+      expect(last_response.body).to include('Europe')
+    end
+
+    it 'returns 404 for unknown region name' do
+      get '/region/unknown'
+      expect(last_response.status).to eq(404)
+    end
+  end
+
   describe 'GET /api/market/:region' do
     it 'returns JSON for US region' do
       get '/api/market/us'

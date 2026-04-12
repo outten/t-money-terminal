@@ -37,7 +37,16 @@ class TMoneyTerminal < Sinatra::Base
     redirect '/dashboard', 301
   end
 
-  VALID_SYMBOLS = (MarketDataService::REGIONS.values.flatten).freeze
+  VALID_SYMBOLS      = (MarketDataService::REGIONS.values.flatten).freeze
+  VALID_REGION_NAMES = MarketDataService::REGIONS.keys.map(&:to_s).freeze
+
+  get '/region/:name' do
+    region_name = params['name'].downcase
+    halt 404, 'Region not found' unless VALID_REGION_NAMES.include?(region_name)
+    @region_label = MarketDataService::REGION_LABEL[region_name.to_sym]
+    @data = MarketDataService.region(region_name.to_sym)
+    erb :region
+  end
 
   get '/analysis/:symbol' do
     symbol = params['symbol'].upcase

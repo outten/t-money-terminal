@@ -3,6 +3,26 @@ require_relative '../app/market_data_service'
 require_relative '../app/recommendation_service'
 
 RSpec.describe MarketDataService do
+  describe '.symbol_type' do
+    it 'returns ETF for known ETF symbols' do
+      expect(MarketDataService.symbol_type('SPY')).to eq('ETF')
+      expect(MarketDataService.symbol_type('QQQ')).to eq('ETF')
+      expect(MarketDataService.symbol_type('EWJ')).to eq('ETF')
+      expect(MarketDataService.symbol_type('VGK')).to eq('ETF')
+    end
+
+    it 'returns Equity for unknown symbols' do
+      expect(MarketDataService.symbol_type('AAPL')).to eq('Equity')
+      expect(MarketDataService.symbol_type('UNKNOWN')).to eq('Equity')
+    end
+
+    it 'uses cached finnhub_type when available' do
+      MarketDataService.send(:store_cache, 'profile:TSLA', { name: 'Tesla', finnhub_type: 'EQS' })
+      expect(MarketDataService.symbol_type('TSLA')).to eq('Equity')
+      MarketDataService.send(:instance_variable_get, :@cache).delete('profile:TSLA')
+    end
+  end
+
   describe '.region' do
     it 'returns quotes for US region' do
       result = MarketDataService.region(:us)
@@ -92,7 +112,7 @@ RSpec.describe RecommendationService do
     it 'returns a signal for each tracked symbol' do
       signals = RecommendationService.signals
       expect(signals).to be_an(Array)
-      expect(signals.length).to eq(5)
+      expect(signals.length).to eq(MarketDataService::REGIONS.values.flatten.length)
       signals.each do |s|
         expect(%w[BUY SELL HOLD]).to include(s[:signal])
       end
@@ -115,11 +135,12 @@ RSpec.describe RecommendationService do
   end
 
   describe '.signal_detail' do
-    it 'returns a hash with :signal, :signal_type, :analyst keys' do
+    it 'returns a hash with :signal, :signal_type, :analyst, :score keys' do
       detail = RecommendationService.signal_detail('SPY')
       expect(detail).to have_key(:signal)
       expect(detail).to have_key(:signal_type)
       expect(detail).to have_key(:analyst)
+      expect(detail).to have_key(:score)
       expect(%w[BUY SELL HOLD]).to include(detail[:signal])
     end
 
@@ -127,33 +148,45 @@ RSpec.describe RecommendationService do
       allow(MarketDataService).to receive(:analyst_recommendations).and_return(nil)
       detail = RecommendationService.signal_detail('SPY')
       expect(detail[:signal_type]).to eq('Momentum Signal')
+      expect(detail[:score]).to be_nil
     end
   end
 
   describe '.analyst_signal (via signal_detail)' do
-    it 'returns BUY when strong_buy + buy significantly outweigh bears' do
+    it 'returns BUY when weighted score > 0.5' do
       allow(MarketDataService).to receive(:analyst_recommendations).and_return(
         { strong_buy: 10, buy: 8, hold: 2, sell: 1, strong_sell: 1 }
       )
       detail = RecommendationService.signal_detail('AAPL')
       expect(detail[:signal]).to eq('BUY')
       expect(detail[:signal_type]).to eq('Analyst Consensus')
+      expect(detail[:score]).to be > 0.5
     end
 
-    it 'returns SELL when bears significantly outweigh bulls' do
+    it 'returns SELL when weighted score < -0.5' do
       allow(MarketDataService).to receive(:analyst_recommendations).and_return(
         { strong_buy: 1, buy: 1, hold: 2, sell: 8, strong_sell: 10 }
       )
       detail = RecommendationService.signal_detail('AAPL')
       expect(detail[:signal]).to eq('SELL')
+      expect(detail[:score]).to be < -0.5
     end
 
-    it 'returns HOLD when bulls and bears are balanced' do
+    it 'returns HOLD when weighted score is between -0.5 and 0.5' do
       allow(MarketDataService).to receive(:analyst_recommendations).and_return(
         { strong_buy: 3, buy: 3, hold: 10, sell: 3, strong_sell: 3 }
       )
       detail = RecommendationService.signal_detail('AAPL')
       expect(detail[:signal]).to eq('HOLD')
+      expect(detail[:score]).to be_between(-0.5, 0.5)
+    end
+
+    it 'computes score correctly for a pure strong-buy analyst pool' do
+      allow(MarketDataService).to receive(:analyst_recommendations).and_return(
+        { strong_buy: 10, buy: 0, hold: 0, sell: 0, strong_sell: 0 }
+      )
+      detail = RecommendationService.signal_detail('AAPL')
+      expect(detail[:score]).to eq(2.0)
     end
   end
 end

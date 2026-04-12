@@ -1,12 +1,15 @@
 require_relative 'market_data_service'
 
 class RecommendationService
-  ALL_SYMBOLS = %w[SPY AAPL MSFT EWJ VGK].freeze
+  ALL_SYMBOLS = (MarketDataService::REGIONS.values.flatten).freeze
 
-  REGION_MAP = {
-    'SPY' => 'US', 'AAPL' => 'US', 'MSFT' => 'US',
-    'EWJ' => 'Japan', 'VGK' => 'Europe'
-  }.freeze
+  REGION_MAP = ALL_SYMBOLS.each_with_object({}) do |sym, map|
+    region_key = MarketDataService::REGIONS.find { |_k, v| v.include?(sym) }&.first
+    map[sym] = MarketDataService::REGION_LABEL[region_key] if region_key
+  end.freeze
+
+  BUY_THRESHOLD  =  0.5
+  SELL_THRESHOLD = -0.5
 
   def self.signal_for(symbol)
     signal_detail(symbol)[:signal]
@@ -17,16 +20,17 @@ class RecommendationService
   def self.signal_detail(symbol)
     analyst = MarketDataService.analyst_recommendations(symbol)
     if analyst && analyst_has_data?(analyst)
-      signal = analyst_signal(analyst)
-      { signal: signal, signal_type: 'Analyst Consensus', analyst: analyst }
+      score  = analyst_score(analyst)
+      signal = score_to_signal(score)
+      { signal: signal, signal_type: 'Analyst Consensus', analyst: analyst, score: score.round(3) }
     else
       data   = MarketDataService.quote(symbol)
       change = (data['10. change percent'] || data[:change] || '0%').to_f
       signal = change > 1.0 ? 'BUY' : change < -1.0 ? 'SELL' : 'HOLD'
-      { signal: signal, signal_type: 'Momentum Signal', analyst: nil }
+      { signal: signal, signal_type: 'Momentum Signal', analyst: nil, score: nil }
     end
   rescue StandardError
-    { signal: 'HOLD', signal_type: 'Momentum Signal', analyst: nil }
+    { signal: 'HOLD', signal_type: 'Momentum Signal', analyst: nil, score: nil }
   end
 
   def self.signals
@@ -70,13 +74,23 @@ class RecommendationService
      analyst[:hold].to_i + analyst[:sell].to_i + analyst[:strong_sell].to_i) > 0
   end
 
-  private_class_method def self.analyst_signal(analyst)
-    bull = analyst[:strong_buy].to_i + analyst[:buy].to_i
-    bear = analyst[:strong_sell].to_i + analyst[:sell].to_i
-    hold = analyst[:hold].to_i
-    if bull > bear + (hold / 2.0)
+  private_class_method def self.analyst_score(analyst)
+    total = analyst[:strong_buy].to_i + analyst[:buy].to_i + analyst[:hold].to_i +
+            analyst[:sell].to_i + analyst[:strong_sell].to_i
+    return 0.0 if total.zero?
+
+    ( analyst[:strong_buy].to_i   * 2 +
+      analyst[:buy].to_i          * 1 +
+      analyst[:hold].to_i         * 0 +
+      analyst[:sell].to_i         * -1 +
+      analyst[:strong_sell].to_i  * -2
+    ).to_f / total
+  end
+
+  private_class_method def self.score_to_signal(score)
+    if score > BUY_THRESHOLD
       'BUY'
-    elsif bear > bull + (hold / 2.0)
+    elsif score < SELL_THRESHOLD
       'SELL'
     else
       'HOLD'
