@@ -76,3 +76,36 @@ function renderVolumeChart(id, data) {
     options: { responsive: true, plugins: { legend: { display: false } } }
   });
 }
+
+var historicalChartInstance = null;
+function renderHistoricalChart(id, labels, prices) {
+  const ctx = document.getElementById(id);
+  if (!ctx) return;
+  if (historicalChartInstance) {
+    historicalChartInstance.destroy();
+    historicalChartInstance = null;
+  }
+  historicalChartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Close Price',
+        data: prices,
+        borderColor: '#0071e3',
+        backgroundColor: '#0071e31a',
+        tension: 0.3,
+        fill: true,
+        pointRadius: 2
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { maxTicksLimit: 8 } },
+        y: { ticks: { callback: function(v) { return '$' + v.toFixed(2); } } }
+      }
+    }
+  });
+}

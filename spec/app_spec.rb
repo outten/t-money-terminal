@@ -51,10 +51,36 @@ RSpec.describe TMoneyTerminal do
   end
 
   describe 'GET /recommendations' do
-    it 'loads the recommendations page with disclaimer' do
+    it 'redirects to /dashboard with 301' do
       get '/recommendations'
+      expect(last_response.status).to eq(301)
+      expect(last_response.location).to include('/dashboard')
+    end
+  end
+
+  describe 'GET /analysis/:symbol' do
+    it 'loads the analysis page for a valid symbol' do
+      get '/analysis/SPY'
       expect(last_response).to be_ok
-      expect(last_response.body).to include('Disclaimer')
+      expect(last_response.body).to include('SPY')
+    end
+
+    it 'returns 404 for an unknown symbol' do
+      get '/analysis/INVALID'
+      expect(last_response.status).to eq(404)
+    end
+  end
+
+  describe 'GET /api/candle/:symbol/:period' do
+    it 'returns JSON for a valid symbol and period' do
+      get '/api/candle/SPY/1y'
+      expect(last_response).to be_ok
+      expect(last_response.content_type).to include('application/json')
+    end
+
+    it 'returns 404 for invalid symbol' do
+      get '/api/candle/INVALID/1y'
+      expect(last_response.status).to eq(404)
     end
   end
 

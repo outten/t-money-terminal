@@ -1,0 +1,155 @@
+<% if @stale_banner %>
+<div class="stale-banner">
+  <span class="stale-icon">&#9888;</span> <%= @stale_banner %>
+</div>
+<% end %>
+
+<div class="analysis-header">
+  <div class="analysis-title">
+    <h2><%= @symbol %></h2>
+    <% if @profile && @profile[:name] %>
+    <p class="analysis-name"><%= @profile[:name] %></p>
+    <% end %>
+  </div>
+  <div class="analysis-header-right">
+    <div class="analysis-signal-badge">
+      <span class="signal signal-<%= @signal.downcase %> signal-lg"><%= @signal %></span>
+      <span class="signal-type-label"><%= @signal_type %></span>
+    </div>
+    <a href="/analysis/<%= @symbol %>?refresh=1" class="refresh-btn" title="Bust cache and reload live data">
+      &#8635; Refresh
+    </a>
+  </div>
+</div>
+
+<!-- Analyst Consensus -->
+<section class="analysis-section">
+  <h3>Analyst Consensus</h3>
+  <% if @analyst %>
+  <% total = (@analyst[:strong_buy].to_i + @analyst[:buy].to_i + @analyst[:hold].to_i + @analyst[:sell].to_i + @analyst[:strong_sell].to_i).to_f %>
+  <% total = 1.0 if total == 0 %>
+  <div class="analyst-grid">
+    <% [[:strong_buy, 'Strong Buy', 'bullish'], [:buy, 'Buy', 'bullish'], [:hold, 'Hold', 'neutral'], [:sell, 'Sell', 'bearish'], [:strong_sell, 'Strong Sell', 'bearish']].each do |key, label, cls| %>
+    <div class="analyst-row">
+      <span class="analyst-label"><%= label %></span>
+      <div class="analyst-bar-wrap">
+        <div class="analyst-bar analyst-bar-<%= cls %>" style="width:<%= (@analyst[key].to_i / total * 100).round %>%"></div>
+      </div>
+      <span class="analyst-count"><%= @analyst[key] %></span>
+    </div>
+    <% end %>
+  </div>
+  <% if @analyst[:period] %>
+  <p class="data-source">Source: Finnhub — period: <%= @analyst[:period] %></p>
+  <% else %>
+  <p class="data-source">Source: Finnhub</p>
+  <% end %>
+  <% else %>
+  <p class="no-data">No analyst consensus data available for this symbol.</p>
+  <% end %>
+</section>
+
+<!-- Company Profile -->
+<section class="analysis-section">
+  <h3>Company Profile</h3>
+  <% if @profile %>
+  <div class="profile-grid">
+    <% if @profile[:description] %>
+    <div class="profile-description">
+      <p><%= @profile[:description] %></p>
+    </div>
+    <% end %>
+    <div class="profile-fields">
+      <% unless @profile[:exchange].to_s.empty? %>
+      <div class="profile-field"><span class="field-label">Exchange</span><span class="field-value"><%= @profile[:exchange] %></span></div>
+      <% end %>
+      <% unless @profile[:industry].to_s.empty? %>
+      <div class="profile-field"><span class="field-label">Industry</span><span class="field-value"><%= @profile[:industry] %></span></div>
+      <% end %>
+      <% if @profile[:market_cap] && @profile[:market_cap].to_f > 0 %>
+      <% mc = @profile[:market_cap].to_f %>
+      <% mc_str = mc >= 1_000_000 ? "$#{'%.2f' % (mc / 1_000_000)}T" : mc >= 1_000 ? "$#{'%.2f' % (mc / 1_000)}B" : "$#{'%.0f' % mc}M" %>
+      <div class="profile-field"><span class="field-label">Market Cap</span><span class="field-value"><%= mc_str %></span></div>
+      <% end %>
+      <% if @profile[:ipo] && !@profile[:ipo].to_s.empty? %>
+      <div class="profile-field"><span class="field-label">IPO Date</span><span class="field-value"><%= @profile[:ipo] %></span></div>
+      <% end %>
+    </div>
+  </div>
+  <p class="data-source">Source: Finnhub</p>
+  <% else %>
+  <p class="no-data">No profile data available for this symbol.</p>
+  <% end %>
+</section>
+
+<!-- Key Financials from Quote -->
+<section class="analysis-section">
+  <h3>Key Financials</h3>
+  <div class="profile-grid">
+    <div class="profile-fields">
+      <% price  = @quote['05. price']          || @quote[:price]          || 'N/A' %>
+      <% change = @quote['10. change percent'] || @quote[:change]         || 'N/A' %>
+      <% high   = @quote['03. high']           || @quote[:high]           || 'N/A' %>
+      <% low    = @quote['04. low']            || @quote[:low]            || 'N/A' %>
+      <% open   = @quote['02. open']           || @quote[:open]           || 'N/A' %>
+      <div class="profile-field"><span class="field-label">Price</span><span class="field-value"><%= price %></span></div>
+      <div class="profile-field"><span class="field-label">Change</span><span class="field-value <%= change.to_f >= 0 ? 'positive' : 'negative' %>"><%= change %></span></div>
+      <div class="profile-field"><span class="field-label">Open</span><span class="field-value"><%= open %></span></div>
+      <div class="profile-field"><span class="field-label">High</span><span class="field-value"><%= high %></span></div>
+      <div class="profile-field"><span class="field-label">Low</span><span class="field-value"><%= low %></span></div>
+    </div>
+  </div>
+  <p class="data-source">Source: Alpha Vantage / Finnhub / Yahoo Finance</p>
+</section>
+
+<!-- External Links -->
+<section class="analysis-section">
+  <h3>External Research</h3>
+  <div class="external-links">
+    <a href="https://www.google.com/finance/quote/<%= @symbol %>" target="_blank" rel="noopener noreferrer" class="ext-link">Google Finance &rarr;</a>
+    <a href="https://finance.yahoo.com/quote/<%= @symbol %>" target="_blank" rel="noopener noreferrer" class="ext-link">Yahoo Finance &rarr;</a>
+    <a href="https://finviz.com/quote.ashx?t=<%= @symbol %>" target="_blank" rel="noopener noreferrer" class="ext-link">Finviz &rarr;</a>
+  </div>
+</section>
+
+<!-- Historical Chart -->
+<section class="analysis-section">
+  <h3>Historical Price</h3>
+  <div class="period-buttons">
+    <% %w[1d 1m 3m ytd 1y 5y].each do |p| %>
+    <button class="period-btn <%= p == '1y' ? 'active' : '' %>" data-period="<%= p %>" data-symbol="<%= @symbol %>"><%= p.upcase %></button>
+    <% end %>
+  </div>
+  <div class="chart-box" id="historicalChartWrap">
+    <canvas id="historicalChart"></canvas>
+    <% if !@historical || @historical.empty? %>
+    <p class="no-data chart-no-data">No historical data available. Try <a href="/analysis/<%= @symbol %>?refresh=1">refreshing</a>.</p>
+    <% end %>
+  </div>
+  <p class="data-source">Source: Finnhub / Yahoo Finance</p>
+</section>
+
+<script>
+  (function() {
+    const initialData = <%= (@historical || []).to_json %>;
+    const labels = initialData.map(function(d) { return d.date; });
+    const prices  = initialData.map(function(d) { return d.close; });
+    renderHistoricalChart('historicalChart', labels, prices);
+
+    document.querySelectorAll('.period-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        document.querySelectorAll('.period-btn').forEach(function(b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        const symbol = btn.dataset.symbol;
+        const period = btn.dataset.period;
+        fetch('/api/candle/' + symbol + '/' + period)
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            const lbl = data.map(function(d) { return d.date; });
+            const pts = data.map(function(d) { return d.close; });
+            renderHistoricalChart('historicalChart', lbl, pts);
+          });
+      });
+    });
+  })();
+</script>

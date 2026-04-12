@@ -97,12 +97,87 @@ RSpec.describe RecommendationService do
         expect(%w[BUY SELL HOLD]).to include(s[:signal])
       end
     end
+
+    it 'includes signal_type in every signal entry' do
+      signals = RecommendationService.signals
+      signals.each do |s|
+        expect(s[:signal_type]).to be_a(String)
+        expect(['Analyst Consensus', 'Momentum Signal']).to include(s[:signal_type])
+      end
+    end
   end
 
   describe '.signal_for' do
     it 'returns a valid signal string for a known symbol' do
       signal = RecommendationService.signal_for('SPY')
       expect(%w[BUY SELL HOLD]).to include(signal)
+    end
+  end
+
+  describe '.signal_detail' do
+    it 'returns a hash with :signal, :signal_type, :analyst keys' do
+      detail = RecommendationService.signal_detail('SPY')
+      expect(detail).to have_key(:signal)
+      expect(detail).to have_key(:signal_type)
+      expect(detail).to have_key(:analyst)
+      expect(%w[BUY SELL HOLD]).to include(detail[:signal])
+    end
+
+    it 'falls back to Momentum Signal when analyst data is nil' do
+      allow(MarketDataService).to receive(:analyst_recommendations).and_return(nil)
+      detail = RecommendationService.signal_detail('SPY')
+      expect(detail[:signal_type]).to eq('Momentum Signal')
+    end
+  end
+
+  describe '.analyst_signal (via signal_detail)' do
+    it 'returns BUY when strong_buy + buy significantly outweigh bears' do
+      allow(MarketDataService).to receive(:analyst_recommendations).and_return(
+        { strong_buy: 10, buy: 8, hold: 2, sell: 1, strong_sell: 1 }
+      )
+      detail = RecommendationService.signal_detail('AAPL')
+      expect(detail[:signal]).to eq('BUY')
+      expect(detail[:signal_type]).to eq('Analyst Consensus')
+    end
+
+    it 'returns SELL when bears significantly outweigh bulls' do
+      allow(MarketDataService).to receive(:analyst_recommendations).and_return(
+        { strong_buy: 1, buy: 1, hold: 2, sell: 8, strong_sell: 10 }
+      )
+      detail = RecommendationService.signal_detail('AAPL')
+      expect(detail[:signal]).to eq('SELL')
+    end
+
+    it 'returns HOLD when bulls and bears are balanced' do
+      allow(MarketDataService).to receive(:analyst_recommendations).and_return(
+        { strong_buy: 3, buy: 3, hold: 10, sell: 3, strong_sell: 3 }
+      )
+      detail = RecommendationService.signal_detail('AAPL')
+      expect(detail[:signal]).to eq('HOLD')
+    end
+  end
+end
+
+RSpec.describe MarketDataService do
+  describe '.analyst_recommendations' do
+    it 'returns nil when FINNHUB_API_KEY is absent and no cached data exists' do
+      saved = ENV.delete('FINNHUB_API_KEY')
+      MarketDataService.clear_all_caches!
+      begin
+        result = MarketDataService.analyst_recommendations('AAPL')
+        expect(result).to be_nil
+      ensure
+        ENV['FINNHUB_API_KEY'] = saved if saved
+      end
+    end
+  end
+
+  describe '.company_profile' do
+    it 'returns a hash with expected keys for ETF SPY (uses hardcoded data)' do
+      profile = MarketDataService.company_profile('SPY')
+      expect(profile).to be_a(Hash)
+      expect(profile[:name]).to include('S&P 500')
+      expect(profile[:exchange]).to eq('NYSE Arca')
     end
   end
 end

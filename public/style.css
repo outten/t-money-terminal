@@ -124,3 +124,170 @@ body.dark .summary-table td { border-color: #3a3a3c; }
 body.dark .chart-box { background: #2c2c2e; }
 body.dark .chart-box h3 { color: #f5f5f7; }
 body.dark footer { border-color: #3a3a3c; }
+
+/* ---- Stale cache banner ---- */
+.stale-banner {
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: 10px;
+  padding: 0.75rem 1.25rem;
+  margin-bottom: 1.5rem;
+  font-size: 0.86rem;
+  color: #664d00;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.stale-icon { font-size: 1rem; }
+body.dark .stale-banner {
+  background: #3a2e00;
+  border-color: #ffc107;
+  color: #ffd55a;
+}
+
+/* ---- Market Signals cards (dashboard) ---- */
+.market-signals-section { margin-top: 2.5rem; }
+.market-signals-section h3 { font-size: 1.15rem; color: #1d1d1f; margin-bottom: 1rem; }
+.signal-cards { display: flex; flex-wrap: wrap; gap: 1rem; }
+.signal-card {
+  background: #fff;
+  border-radius: 14px;
+  padding: 1.25rem 1.5rem;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.07);
+  flex: 1 1 220px;
+  max-width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border-top: 3px solid #aeaeb2;
+}
+.signal-card-buy  { border-top-color: #34c759; }
+.signal-card-sell { border-top-color: #ff3b30; }
+.signal-card-hold { border-top-color: #ff9f0a; }
+.signal-card-header { display: flex; justify-content: space-between; align-items: center; }
+.signal-card-symbol { font-size: 1.2rem; font-weight: 700; color: #0071e3; text-decoration: none; }
+.signal-card-symbol:hover { text-decoration: underline; }
+.signal-card-meta { display: flex; gap: 0.5rem; font-size: 0.82rem; color: #6e6e73; align-items: center; }
+.signal-card-price { font-weight: 600; color: #1d1d1f; }
+.signal-card-rationale { font-size: 0.82rem; color: #6e6e73; margin: 0; }
+.view-analysis-link { font-size: 0.82rem; color: #0071e3; text-decoration: none; align-self: flex-start; }
+.view-analysis-link:hover { text-decoration: underline; }
+.analyst-summary { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.analyst-type { font-size: 0.74rem; background: #f2f2f7; border-radius: 6px; padding: 0.15rem 0.5rem; color: #555; }
+.analyst-counts { font-size: 0.74rem; color: #6e6e73; }
+
+.signal.signal-lg { font-size: 1rem; padding: 0.35rem 0.9rem; }
+
+/* ---- Analysis page ---- */
+.analysis-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+.analysis-title h2 { margin: 0 0 0.2rem 0; font-size: 2rem; }
+.analysis-name { margin: 0; color: #6e6e73; font-size: 1rem; }
+.analysis-header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 0.6rem; }
+.analysis-signal-badge { display: flex; flex-direction: column; align-items: flex-end; gap: 0.3rem; }
+.signal-type-label { font-size: 0.78rem; color: #8e8e93; }
+
+.refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.4rem 0.9rem;
+  border: 1px solid #d1d1d6;
+  border-radius: 8px;
+  background: #f2f2f7;
+  color: #3a3a3c;
+  font-size: 0.82rem;
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+.refresh-btn:hover { background: #e5e5ea; border-color: #aeaeb2; }
+
+.chart-no-data { text-align: center; padding: 1rem 0; }
+
+body.dark .analysis-title h2 { color: #f5f5f7; }
+body.dark .refresh-btn { background: #3a3a3c; border-color: #48484a; color: #aeaeb2; }
+body.dark .refresh-btn:hover { background: #48484a; }
+.analysis-section {
+  background: #fff;
+  border-radius: 14px;
+  padding: 1.5rem 2rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+}
+.analysis-section h3 { margin: 0 0 1rem 0; font-size: 1.05rem; color: #1d1d1f; }
+.data-source { margin: 1rem 0 0; font-size: 0.76rem; color: #8e8e93; }
+.no-data { color: #8e8e93; font-style: italic; }
+
+/* Analyst bars */
+.analyst-grid { display: flex; flex-direction: column; gap: 0.6rem; }
+.analyst-row { display: flex; align-items: center; gap: 0.75rem; }
+.analyst-label { width: 90px; font-size: 0.85rem; color: #1d1d1f; flex-shrink: 0; }
+.analyst-bar-wrap { flex: 1; background: #f2f2f7; border-radius: 4px; height: 12px; overflow: hidden; }
+.analyst-bar { height: 100%; border-radius: 4px; min-width: 2px; transition: width 0.3s ease; }
+.analyst-bar-bullish { background: #34c759; }
+.analyst-bar-neutral  { background: #ff9f0a; }
+.analyst-bar-bearish  { background: #ff3b30; }
+.analyst-count { width: 28px; font-size: 0.82rem; color: #6e6e73; text-align: right; flex-shrink: 0; }
+
+/* Profile grid */
+.profile-grid { display: flex; flex-direction: column; gap: 1rem; }
+.profile-description p { margin: 0; font-size: 0.9rem; line-height: 1.55; color: #3a3a3c; }
+.profile-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.5rem 1.5rem; }
+.profile-field { display: flex; flex-direction: column; }
+.field-label { font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; color: #8e8e93; }
+.field-value { font-size: 0.95rem; font-weight: 500; color: #1d1d1f; }
+.field-value.positive { color: #34c759; }
+.field-value.negative { color: #ff3b30; }
+
+/* External links */
+.external-links { display: flex; flex-wrap: wrap; gap: 1rem; }
+.ext-link {
+  display: inline-block;
+  padding: 0.55rem 1.2rem;
+  border: 1px solid #0071e3;
+  border-radius: 8px;
+  color: #0071e3;
+  text-decoration: none;
+  font-size: 0.9rem;
+  transition: background 0.15s;
+}
+.ext-link:hover { background: #0071e3; color: #fff; }
+
+/* Period toggle buttons */
+.period-buttons { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+.period-btn {
+  padding: 0.35rem 0.85rem;
+  border: 1px solid #d1d1d6;
+  border-radius: 7px;
+  background: #f2f2f7;
+  color: #3a3a3c;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.period-btn:hover { background: #e5e5ea; }
+.period-btn.active { background: #0071e3; color: #fff; border-color: #0071e3; }
+
+/* Dark mode extensions */
+body.dark .market-signals-section h3 { color: #f5f5f7; }
+body.dark .signal-card { background: #2c2c2e; box-shadow: none; }
+body.dark .signal-card-symbol { color: #0a84ff; }
+body.dark .signal-card-price { color: #f5f5f7; }
+body.dark .analyst-type { background: #3a3a3c; color: #aeaeb2; }
+body.dark .analysis-section { background: #2c2c2e; box-shadow: none; }
+body.dark .analysis-section h3 { color: #f5f5f7; }
+body.dark .analyst-label { color: #f5f5f7; }
+body.dark .analyst-bar-wrap { background: #3a3a3c; }
+body.dark .profile-description p { color: #aeaeb2; }
+body.dark .field-value { color: #f5f5f7; }
+body.dark .ext-link { border-color: #0a84ff; color: #0a84ff; }
+body.dark .ext-link:hover { background: #0a84ff; color: #fff; }
+body.dark .period-btn { background: #3a3a3c; border-color: #48484a; color: #aeaeb2; }
+body.dark .period-btn:hover { background: #48484a; }
+body.dark .period-btn.active { background: #0a84ff; color: #fff; border-color: #0a84ff; }

@@ -1,4 +1,4 @@
-.PHONY: run dev test install refresh-cache
+.PHONY: run dev test install refresh-cache refresh-symbol
 
 install:
 	bundle install
@@ -14,3 +14,7 @@ test:
 
 refresh-cache:
 	bundle exec ruby scripts/refresh_cache.rb
+
+# Refresh a single symbol: make refresh-symbol SYMBOL=AAPL
+refresh-symbol:
+	bundle exec ruby scripts/refresh_cache.rb $(SYMBOL)

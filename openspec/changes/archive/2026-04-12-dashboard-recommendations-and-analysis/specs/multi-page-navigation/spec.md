@@ -1,9 +1,4 @@
-# multi-page-navigation Specification
-
-## Purpose
-Define requirements for multi-page navigation across the application, including a shared layout and navigation bar linking all major pages.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Multi-page navigation with symbol analysis routing
 The system SHALL render a navigation bar on all pages. The navigation SHALL include Dashboard, US Markets, Japan Markets, and Europe Markets. The Recommendations nav item SHALL be removed. Every symbol displayed in the application SHALL be a clickable link navigating to `/analysis/:symbol`.
@@ -19,7 +14,3 @@ The system SHALL render a navigation bar on all pages. The navigation SHALL incl
 #### Scenario: Dashboard shows recommendations section
 - **WHEN** the user loads the Dashboard
 - **THEN** a Market Signals section is visible below the summary table, showing signal cards for all tracked symbols with price, change, analyst counts summary, and a "View Analysis →" link
-
-#### Scenario: Active nav item is highlighted
-- **WHEN** the user is on a specific page
-- **THEN** the corresponding navigation item is visually highlighted

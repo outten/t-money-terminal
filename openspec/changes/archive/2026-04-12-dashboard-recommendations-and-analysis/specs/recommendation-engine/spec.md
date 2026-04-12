@@ -1,9 +1,4 @@
-# recommendation-engine Specification
-
-## Purpose
-Define requirements for a buy/sell/hold recommendation engine based on market signals, with appropriate disclaimers that recommendations are not financial advice.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: BUY/SELL/HOLD signal generation
 The system SHALL derive BUY/SELL/HOLD signals using Finnhub analyst consensus as the primary source. For symbols with analyst data, the signal SHALL be computed from the most recent monthly snapshot: if `strongBuy + buy > strongSell + sell + (hold / 2)` the signal is BUY; if `strongSell + sell > strongBuy + buy + (hold / 2)` the signal is SELL; otherwise HOLD. For symbols without analyst data (e.g., ETFs), the system SHALL fall back to the price-change-% momentum signal and label it as "Momentum" rather than "Analyst Consensus".

@@ -8,7 +8,7 @@
   <tbody>
     <% @data[:quotes].each do |q| %>
     <tr>
-      <td><strong><%= q[:symbol] %></strong></td>
+      <td><strong><a href="/analysis/<%= q[:symbol] %>"><%= q[:symbol] %></a></strong></td>
       <td><%= q[:region] %></td>
       <td><%= q[:price] %></td>
       <td class="<%= q[:change].to_f >= 0 ? 'positive' : 'negative' %>"><%= q[:change] %></td>
@@ -29,3 +29,42 @@
   const dashData = <%= @data[:quotes].to_json %>;
   renderSummaryChart('dashboardChart', dashData);
 </script>
+
+<% if @signals && !@signals.empty? %>
+<section class="market-signals-section">
+  <h3>Market Signals</h3>
+  <div class="signal-cards">
+    <% @signals.each do |s| %>
+    <div class="signal-card signal-card-<%= s[:signal].downcase %>">
+      <div class="signal-card-header">
+        <a href="/analysis/<%= s[:symbol] %>" class="signal-card-symbol"><%= s[:symbol] %></a>
+        <span class="signal signal-<%= s[:signal].downcase %>"><%= s[:signal] %></span>
+      </div>
+      <div class="signal-card-meta">
+        <span class="signal-card-region"><%= s[:region] %></span>
+        <span class="signal-card-price"><%= s[:price] %></span>
+        <span class="signal-card-change <%= s[:change].to_f >= 0 ? 'positive' : 'negative' %>"><%= s[:change] %></span>
+      </div>
+      <% if s[:analyst] %>
+      <div class="analyst-summary">
+        <span class="analyst-type"><%= s[:signal_type] %></span>
+        <span class="analyst-counts">
+          SB:<%= s[:analyst][:strong_buy] %>
+          B:<%= s[:analyst][:buy] %>
+          H:<%= s[:analyst][:hold] %>
+          S:<%= s[:analyst][:sell] %>
+          SS:<%= s[:analyst][:strong_sell] %>
+        </span>
+      </div>
+      <% else %>
+      <div class="analyst-summary">
+        <span class="analyst-type"><%= s[:signal_type] %></span>
+      </div>
+      <% end %>
+      <p class="signal-card-rationale"><%= s[:rationale] %></p>
+      <a href="/analysis/<%= s[:symbol] %>" class="view-analysis-link">View Analysis &rarr;</a>
+    </div>
+    <% end %>
+  </div>
+</section>
+<% end %>
