@@ -68,8 +68,11 @@
       <% end %>
       <% if @profile[:market_cap] && @profile[:market_cap].to_f > 0 %>
       <% mc = @profile[:market_cap].to_f %>
-      <% mc_str = mc >= 1_000_000 ? "$#{'%.2f' % (mc / 1_000_000)}T" : mc >= 1_000 ? "$#{'%.2f' % (mc / 1_000)}B" : "$#{'%.0f' % mc}M" %>
-      <div class="profile-field"><span class="field-label">Market Cap</span><span class="field-value"><%= mc_str %></span></div>
+      <% mc_ccy = @profile[:market_cap_currency].to_s.upcase %>
+      <% mc_sym = case mc_ccy when 'JPY' then '¥' when 'EUR' then '€' when 'GBP' then '£' else '$' end %>
+      <% mc_str = mc >= 1_000_000 ? "#{mc_sym}#{'%.2f' % (mc / 1_000_000)}T" : mc >= 1_000 ? "#{mc_sym}#{'%.2f' % (mc / 1_000)}B" : "#{mc_sym}#{'%.0f' % mc}M" %>
+      <% mc_label = (mc_ccy.empty? || mc_ccy == 'USD') ? 'Market Cap' : "Market Cap (#{mc_ccy})" %>
+      <div class="profile-field"><span class="field-label"><%= mc_label %></span><span class="field-value"><%= mc_str %></span></div>
       <% end %>
       <% if @profile[:ipo] && !@profile[:ipo].to_s.empty? %>
       <div class="profile-field"><span class="field-label">IPO Date</span><span class="field-value"><%= @profile[:ipo] %></span></div>
@@ -104,7 +107,7 @@
       <div class="profile-field"><span class="field-label">Low</span><span class="field-value"><%= low %></span></div>
     </div>
   </div>
-  <p class="data-source">Source: Alpha Vantage / Finnhub / Yahoo Finance</p>
+  <p class="data-source">Source: Tiingo / Alpha Vantage / Finnhub / Yahoo Finance</p>
 </section>
 
 <!-- External Links -->
@@ -131,7 +134,7 @@
     <p class="no-data chart-no-data">No historical data available. Try <a href="/analysis/<%= @symbol %>?refresh=1">refreshing</a>.</p>
     <% end %>
   </div>
-  <p class="data-source">Source: Finnhub / Yahoo Finance</p>
+  <p class="data-source">Source: Yahoo Finance / Tiingo / Alpha Vantage</p>
 </section>
 
 <script>

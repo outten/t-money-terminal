@@ -10,7 +10,9 @@ require 'fileutils'
 
 class MarketDataService
   CACHE_TTL  = 86400 # 24 hours
-  CACHE_FILE = File.expand_path('../../tmp/market_cache.json', __FILE__).freeze
+  CACHE_DIR  = File.expand_path('../../.cache', __FILE__).freeze
+  CACHE_FILE = File.join(CACHE_DIR, 'market_cache.json').freeze
+  LEGACY_CACHE_FILE = File.expand_path('../../tmp/market_cache.json', __FILE__).freeze
 
   REGIONS = {
     us:     %w[SPY QQQ AAPL MSFT GOOGL AMZN NVDA JPM],
@@ -55,7 +57,7 @@ class MarketDataService
     'JPM'  => { price: '210.30', change: '+0.3%', volume: '10000000' },
     'EWJ'  => { price: '72.10',  change: '+0.3%', volume: '4500000' },
     'TM'   => { price: '198.40', change: '-0.2%', volume: '1200000' },
-    'SONY' => { price: '88.60',  change: '+0.5%', volume: '900000' },
+    'SONY' => { price: '21.00',  change: '+0.5%', volume: '900000' },
     'VGK'  => { price: '69.40',  change: '+0.6%', volume: '2100000' },
     'ASML' => { price: '768.50', change: '+1.3%', volume: '800000' },
     'SAP'  => { price: '218.90', change: '+0.2%', volume: '1100000' },
@@ -69,20 +71,30 @@ class MarketDataService
   @yahoo_crumb            = nil
   @yahoo_cookie           = nil
   @yahoo_crumb_fetched_at = nil
-
-  # Load disk cache immediately at class load so data survives restarts
-  class << self
-    def _boot_load
-      load_from_disk
-    rescue StandardError
-      # Silent — missing or corrupt cache file is fine on first run
-    end
-  end
-  _boot_load
+  @yahoo_rate_limited_until = nil
+  @tiingo_quote_rate_limited_until = nil
+  @tiingo_hist_rate_limited_until  = nil
+  @av_quote_rate_limited_until     = nil
 
   class << self
     def cache_fresh?
       @cache_timestamp && (Time.now - @cache_timestamp) < CACHE_TTL
+    end
+
+    def cache_entry_fresh?(key)
+      ts = @cache_timestamps[key]
+      ts && (Time.now - ts) < CACHE_TTL
+    end
+
+    def read_live_cache(key)
+      value = @cache[key]
+      return nil unless value
+
+      return value if cache_entry_fresh?(key)
+
+      # Expired live entry: drop it so the caller refetches and can fall back to persistent cache.
+      @cache.delete(key)
+      nil
     end
 
     def bust_cache!
@@ -99,7 +111,13 @@ class MarketDataService
       @cache_timestamps = {}
       @yahoo_crumb      = nil
       @yahoo_cookie     = nil
+      @yahoo_crumb_fetched_at = nil
+      @yahoo_rate_limited_until = nil
+      @tiingo_quote_rate_limited_until = nil
+      @tiingo_hist_rate_limited_until  = nil
+      @av_quote_rate_limited_until     = nil
       File.delete(CACHE_FILE) if File.exist?(CACHE_FILE)
+      File.delete(LEGACY_CACHE_FILE) if File.exist?(LEGACY_CACHE_FILE)
     rescue StandardError
       nil
     end
@@ -118,13 +136,43 @@ class MarketDataService
       save_to_disk
     end
 
+    # Live-only refresh for a symbol.
+    # Keeps persistent cache/timestamps so historical pages still have fallback data
+    # if providers are temporarily rate-limited.
+    def refresh_symbol_live_cache!(symbol)
+      keys_to_clear = [symbol, "analyst:#{symbol}", "profile:#{symbol}"] +
+                      YAHOO_RANGE_MAP.keys.map { |p| "candle:#{symbol}:#{p}" }
+      keys_to_clear.each { |k| @cache.delete(k) }
+      @cache_timestamp = nil if @cache.empty?
+    end
+
     # Returns { cached_at: Time|nil, is_stale: bool }
     # is_stale is true when live cache is empty but persistent (stale) data exists
     def cache_info_for(key)
+      live = read_live_cache(key)
       {
         cached_at: @cache_timestamps[key],
-        is_stale:  @cache[key].nil? && !@persistent_cache[key].nil?
+        is_stale:  live.nil? && !@persistent_cache[key].nil?
       }
+    end
+
+    # Returns an array of hashes describing every known cache entry:
+    #   { key:, type:, symbol:, period:, cached_at:, is_stale:, size: }
+    def cache_summary
+      all_keys = (@cache.keys + @persistent_cache.keys).uniq
+      all_keys.map do |key|
+        type, symbol, period = _parse_cache_key(key)
+        entry    = @cache[key] || @persistent_cache[key]
+        ts       = @cache_timestamps[key]
+        stale    = (!cache_entry_fresh?(key) || @cache[key].nil?) && !@persistent_cache[key].nil?
+        size     = case entry
+                   when Array then entry.length
+                   when Hash  then entry.keys.length
+                   else            1
+                   end
+        { key: key, type: type, symbol: symbol, period: period,
+          cached_at: ts, is_stale: stale, size: size }
+      end.sort_by { |e| e[:key] }
     end
 
     def quote(symbol)
@@ -149,8 +197,33 @@ class MarketDataService
     # Returns a hash { period => points_array_or_nil } for each period.
     # Used by the refresh script.
     def prefetch_all_historical(symbol)
+      # Yahoo primary: one 5y monthly call gives data to slice all periods locally
+      yahoo_5y = fetch_historical_from_yahoo(symbol, YAHOO_RANGE_MAP['5y'])
+      if yahoo_5y && !yahoo_5y.empty?
+        today   = Date.today
+        cutoffs = {
+          '1d'  => today - 1,
+          '1m'  => today - 30,
+          '3m'  => today - 90,
+          'ytd' => Date.new(today.year, 1, 1),
+          '1y'  => today - 365,
+          '5y'  => today - (5 * 365)
+        }
+        results = {}
+        cutoffs.each do |period, cutoff|
+          points = yahoo_5y.select { |p| Date.parse(p[:date]) >= cutoff }
+          if points.any?
+            store_cache("candle:#{symbol}:#{period}", points)
+            results[period] = points
+          else
+            results[period] = nil
+          end
+        end
+        return results if results.values.any?
+      end
+
       # Tiingo: one call for 5y of daily EOD data, slice into all periods locally
-      if ENV['TIINGO_API_KEY']
+      if ENV['TIINGO_API_KEY'] && (!@tiingo_hist_rate_limited_until || Time.now >= @tiingo_hist_rate_limited_until)
         api_key    = ENV['TIINGO_API_KEY']
         start_date = Date.today - (5 * 366)
         url = URI("https://api.tiingo.com/tiingo/daily/#{symbol}/prices" \
@@ -164,7 +237,7 @@ class MarketDataService
           if data.is_a?(Array) && !data.empty?
             all_points = data.filter_map { |row|
               date  = row['date']&.slice(0, 10)
-              close = row['adjClose'] || row['close']
+              close = row['close'] || row['adjClose']
               next unless date && close
               { date: date, close: close.to_f.round(2) }
             }.sort_by { |p| p[:date] }
@@ -192,7 +265,12 @@ class MarketDataService
             return results if results.values.any?
           end
         else
-          warn "[MarketDataService] Tiingo prefetch returned HTTP #{res.code} for #{symbol}" unless test_env?
+          if res.code == '429'
+            @tiingo_hist_rate_limited_until = Time.now + 900
+            warn "[MarketDataService] Tiingo historical rate limited for #{symbol}" unless test_env?
+          else
+            warn "[MarketDataService] Tiingo prefetch returned HTTP #{res.code} for #{symbol}" unless test_env?
+          end
         end
       end
 
@@ -278,7 +356,8 @@ class MarketDataService
     end
 
     def fetch_quote(symbol)
-      return @cache[symbol] if cache_fresh? && @cache[symbol]
+      cached = read_live_cache(symbol)
+      return cached if cached
 
       result = try_providers(symbol)
 
@@ -299,6 +378,7 @@ class MarketDataService
 
     def try_providers(symbol)
       providers = [
+        [:fetch_from_tiingo_quote,  'Tiingo'],
         [:fetch_from_alpha_vantage, 'Alpha Vantage'],
         [:fetch_from_finnhub,       'Finnhub'],
         [:fetch_from_yahoo,         'Yahoo Finance']
@@ -308,7 +388,8 @@ class MarketDataService
         begin
           result = send(method_name, symbol)
           return result if result && !result.empty?
-          warn "[MarketDataService] #{label} returned empty for #{symbol} — trying next provider" unless test_env?
+          # nil means provider skipped/rate-limited; only warn on genuinely empty responses
+          warn "[MarketDataService] #{label} returned empty for #{symbol} — trying next provider" if result == {} && !test_env?
         rescue StandardError => e
           warn "[MarketDataService] #{label} failed for #{symbol} (#{e.class}: #{e.message}) — trying next provider" unless test_env?
         end
@@ -317,7 +398,59 @@ class MarketDataService
       nil
     end
 
+    def fetch_from_tiingo_quote(symbol)
+      if @tiingo_quote_rate_limited_until && Time.now < @tiingo_quote_rate_limited_until
+        return nil
+      end
+
+      api_key = ENV['TIINGO_API_KEY']
+      return nil unless api_key
+
+      url = URI("https://api.tiingo.com/tiingo/daily/#{symbol}/prices?token=#{api_key}")
+      req = Net::HTTP::Get.new(url)
+      req['Content-Type'] = 'application/json'
+      res = Net::HTTP.start(url.host, url.port, use_ssl: true, read_timeout: 10, open_timeout: 5) { |http| http.request(req) }
+
+      if res.is_a?(Net::HTTPTooManyRequests)
+        @tiingo_quote_rate_limited_until = Time.now + 900
+        warn "[MarketDataService] Tiingo quote rate limited for #{symbol}" unless test_env?
+        return nil
+      end
+
+      return nil unless res.is_a?(Net::HTTPSuccess)
+
+      data = JSON.parse(res.body)
+      return nil unless data.is_a?(Array) && !data.empty?
+
+      row = data.last
+      close   = row['close'] || row['adjClose']
+      high    = row['high'] || row['adjHigh']
+      low     = row['low'] || row['adjLow']
+      open    = row['open'] || row['adjOpen']
+      volume  = row['volume'] || row['adjVolume'] || 0
+      return nil unless close && close != 0
+
+      prev_close = data.length > 1 ? (data[-2]['close'] || data[-2]['adjClose']).to_f : close.to_f
+      change_pct = prev_close.zero? ? 0 : ((close.to_f - prev_close) / prev_close * 100).round(4)
+
+      {
+        '05. price'          => close.to_s,
+        '10. change percent' => "#{change_pct}%",
+        '06. volume'         => volume.to_s,
+        '02. open'           => open.to_s,
+        '03. high'           => high.to_s,
+        '04. low'            => low.to_s
+      }
+    rescue StandardError => e
+      warn "[MarketDataService] Tiingo quote fetch failed for #{symbol}: #{e.message}" unless test_env?
+      nil
+    end
+
     def fetch_from_alpha_vantage(symbol)
+      if @av_quote_rate_limited_until && Time.now < @av_quote_rate_limited_until
+        return nil
+      end
+
       api_key = ENV['ALPHA_VANTAGE_API_KEY']
       unless api_key
         warn "[MarketDataService] ALPHA_VANTAGE_API_KEY is not set — skipping Alpha Vantage for #{symbol}" unless test_env?
@@ -326,7 +459,15 @@ class MarketDataService
 
       url  = URI("https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=#{symbol}&apikey=#{api_key}")
       res  = Net::HTTP.get_response(url)
-      data = JSON.parse(res.body)['Global Quote']
+      body = JSON.parse(res.body)
+
+      if body.key?('Information') || body.key?('Note')
+        @av_quote_rate_limited_until = Time.now + 3600
+        warn "[MarketDataService] Alpha Vantage rate limited for #{symbol}" unless test_env?
+        return nil
+      end
+
+      data = body['Global Quote']
       (data && !data.empty?) ? data : nil
     end
 
@@ -378,7 +519,8 @@ class MarketDataService
 
     def fetch_analyst_recommendations(symbol)
       key = "analyst:#{symbol}"
-      return @cache[key] if @cache[key]
+      cached = read_live_cache(key)
+      return cached if cached
 
       api_key = ENV['FINNHUB_API_KEY']
       unless api_key
@@ -411,7 +553,8 @@ class MarketDataService
 
     def fetch_company_profile(symbol)
       key = "profile:#{symbol}"
-      return @cache[key] if @cache[key]
+      cached = read_live_cache(key)
+      return cached if cached
 
       # Use hardcoded profile for known ETFs
       if ETF_PROFILES.key?(symbol)
@@ -439,6 +582,7 @@ class MarketDataService
         exchange:      data['exchange'],
         industry:      data['finnhubIndustry'],
         market_cap:    data['marketCapitalization'],
+        market_cap_currency: data['currency'],
         ipo:           data['ipo'],
         logo:          data['logo'],
         weburl:        data['weburl'],
@@ -455,12 +599,21 @@ class MarketDataService
 
     def fetch_historical(symbol, period = '1y')
       key = "candle:#{symbol}:#{period}"
-      return @cache[key] if @cache[key]
+      cached = read_live_cache(key)
+      return cached if cached
+
+      # Bootstrap all periods from a single prefetch pass (Yahoo-first),
+      # then serve the requested period from that warmed cache.
+      prefetched = prefetch_all_historical(symbol)
+      if prefetched && prefetched[period] && !prefetched[period].empty?
+        return prefetched[period]
+      end
 
       range_cfg = YAHOO_RANGE_MAP[period] || YAHOO_RANGE_MAP['1y']
-      # Tiingo primary; Yahoo crumb auth secondary; Alpha Vantage TIME_SERIES_WEEKLY tertiary
-      result = fetch_historical_from_tiingo(symbol, period) ||
-               fetch_historical_from_yahoo(symbol, range_cfg) ||
+      # Yahoo primary; Finnhub secondary; Tiingo tertiary; Alpha Vantage fallback
+      result = fetch_historical_from_yahoo(symbol, range_cfg) ||
+           fetch_historical_from_finnhub(symbol, period) ||
+               fetch_historical_from_tiingo(symbol, period) ||
                fetch_historical_from_alpha_vantage(symbol, period)
 
       if result
@@ -478,6 +631,10 @@ class MarketDataService
     end
 
     def fetch_historical_from_tiingo(symbol, period)
+      if @tiingo_hist_rate_limited_until && Time.now < @tiingo_hist_rate_limited_until
+        return nil
+      end
+
       api_key = ENV['TIINGO_API_KEY']
       return nil unless api_key
 
@@ -500,7 +657,12 @@ class MarketDataService
       res = Net::HTTP.start(url.host, url.port, use_ssl: true, read_timeout: 10, open_timeout: 5) { |http| http.request(req) }
 
       unless res.is_a?(Net::HTTPSuccess)
-        warn "[MarketDataService] Tiingo returned HTTP #{res.code} for #{symbol}" unless test_env?
+        if res.code == '429'
+          @tiingo_hist_rate_limited_until = Time.now + 900
+          warn "[MarketDataService] Tiingo historical rate limited for #{symbol}" unless test_env?
+        else
+          warn "[MarketDataService] Tiingo returned HTTP #{res.code} for #{symbol}" unless test_env?
+        end
         return nil
       end
 
@@ -509,7 +671,7 @@ class MarketDataService
 
       points = data.filter_map do |row|
         date  = row['date']&.slice(0, 10)
-        close = row['adjClose'] || row['close']
+        close = row['close'] || row['adjClose']
         next unless date && close
         { date: date, close: close.to_f.round(2) }
       end.sort_by { |p| p[:date] }
@@ -552,50 +714,105 @@ class MarketDataService
     end
 
     def fetch_historical_from_yahoo(symbol, range_cfg)
-      crumb, cookie = fetch_yahoo_crumb_and_cookie
+      if @yahoo_rate_limited_until && Time.now < @yahoo_rate_limited_until
+        return nil
+      end
 
       hosts = %w[query1.finance.yahoo.com query2.finance.yahoo.com]
+
+      # First attempt: no crumb (works when Yahoo isn't requesting auth, saves 2 extra requests)
       hosts.each do |host|
-        begin
-          path = "/v8/finance/chart/#{symbol}?range=#{range_cfg[:range]}&interval=#{range_cfg[:interval]}&includePrePost=false"
-          path += "&crumb=#{URI.encode_uri_component(crumb)}" if crumb
-          url  = URI("https://#{host}#{path}")
-          req  = Net::HTTP::Get.new(url)
-          req['User-Agent']      = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-          req['Accept']          = 'application/json, text/plain, */*'
-          req['Accept-Language'] = 'en-US,en;q=0.9'
-          req['Referer']         = 'https://finance.yahoo.com/'
-          req['Cookie']          = cookie if cookie
-
-          res = Net::HTTP.start(url.host, url.port, use_ssl: true, read_timeout: 10, open_timeout: 5) { |http| http.request(req) }
-
-          unless res.is_a?(Net::HTTPSuccess)
-            warn "[MarketDataService] Yahoo (#{host}) returned HTTP #{res.code} for #{symbol}" unless test_env?
-            # If 429, clear crumb so next request re-fetches it
-            if res.code == '429'
-              @yahoo_crumb = nil
-              @yahoo_cookie = nil
-            end
-            next
-          end
-
-          parsed = JSON.parse(res.body)
-          result = parsed.dig('chart', 'result', 0)
-          next unless result
-
-          timestamps = result['timestamp'] || []
-          closes     = result.dig('indicators', 'quote', 0, 'close') || []
-
-          points = timestamps.zip(closes).filter_map do |ts, close|
-            next unless ts && close
-            { date: Time.at(ts).utc.strftime('%Y-%m-%d'), close: close.round(2) }
-          end
-
-          return points unless points.empty?
-        rescue StandardError => e
-          warn "[MarketDataService] Yahoo historical (#{host}) failed for #{symbol}: #{e.message}" unless test_env?
-        end
+        result = _yahoo_chart_request(symbol, host, range_cfg, crumb: nil, cookie: nil)
+        return result if result
       end
+
+      # Second attempt: crumb + cookie auth
+      crumb, cookie = fetch_yahoo_crumb_and_cookie
+      return nil unless crumb
+
+      hosts.each do |host|
+        result = _yahoo_chart_request(symbol, host, range_cfg, crumb: crumb, cookie: cookie)
+        return result if result
+      end
+
+      nil
+    end
+
+    def _yahoo_chart_request(symbol, host, range_cfg, crumb:, cookie:)
+      path = "/v8/finance/chart/#{symbol}?range=#{range_cfg[:range]}&interval=#{range_cfg[:interval]}&includePrePost=false"
+      path += "&crumb=#{URI.encode_uri_component(crumb)}" if crumb
+      url  = URI("https://#{host}#{path}")
+      req  = Net::HTTP::Get.new(url)
+      req['User-Agent']      = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+      req['Accept']          = 'application/json, text/plain, */*'
+      req['Accept-Language'] = 'en-US,en;q=0.9'
+      req['Referer']         = 'https://finance.yahoo.com/'
+      req['Cookie']          = cookie if cookie
+
+      res = Net::HTTP.start(url.host, url.port, use_ssl: true, read_timeout: 10, open_timeout: 5) { |http| http.request(req) }
+
+      unless res.is_a?(Net::HTTPSuccess)
+        if res.code == '429'
+          @yahoo_rate_limited_until = Time.now + 300
+          @yahoo_crumb = nil
+          @yahoo_cookie = nil
+        end
+        return nil
+      end
+
+      parsed = JSON.parse(res.body)
+      result = parsed.dig('chart', 'result', 0)
+      return nil unless result
+
+      timestamps = result['timestamp'] || []
+      closes     = result.dig('indicators', 'quote', 0, 'close') || []
+      adjcloses  = result.dig('indicators', 'adjclose', 0, 'adjclose') || []
+
+      points = timestamps.each_with_index.filter_map do |ts, idx|
+        close = closes[idx] || adjcloses[idx]
+        next unless ts && close
+        { date: Time.at(ts).utc.strftime('%Y-%m-%d'), close: close.to_f.round(2) }
+      end
+
+      points.empty? ? nil : points
+    rescue StandardError => e
+      warn "[MarketDataService] Yahoo historical (#{host}) failed for #{symbol}: #{e.message}" unless test_env?
+      nil
+    end
+
+    def fetch_historical_from_finnhub(symbol, period)
+      api_key = ENV['FINNHUB_API_KEY']
+      return nil unless api_key
+
+      now = Time.now.to_i
+      from = case period
+             when '1d'  then (Time.now - (2 * 86_400)).to_i
+             when '1m'  then (Time.now - (31 * 86_400)).to_i
+             when '3m'  then (Time.now - (92 * 86_400)).to_i
+             when 'ytd' then Time.new(Time.now.year, 1, 1).to_i
+             when '1y'  then (Time.now - (366 * 86_400)).to_i
+             when '5y'  then (Time.now - ((5 * 366) * 86_400)).to_i
+             else            (Time.now - (366 * 86_400)).to_i
+             end
+
+      url = URI("https://finnhub.io/api/v1/stock/candle?symbol=#{symbol}&resolution=D&from=#{from}&to=#{now}&token=#{api_key}")
+      res = Net::HTTP.get_response(url)
+      return nil unless res.is_a?(Net::HTTPSuccess)
+
+      data = JSON.parse(res.body)
+      return nil unless data['s'] == 'ok'
+
+      closes = data['c'] || []
+      times  = data['t'] || []
+      points = times.each_with_index.filter_map do |ts, idx|
+        close = closes[idx]
+        next unless ts && close
+        { date: Time.at(ts).utc.strftime('%Y-%m-%d'), close: close.to_f.round(2) }
+      end
+
+      points.empty? ? nil : points
+    rescue StandardError => e
+      warn "[MarketDataService] Finnhub historical fetch failed for #{symbol}: #{e.message}" unless test_env?
       nil
     end
 
@@ -649,8 +866,15 @@ class MarketDataService
     end
 
     def load_from_disk
-      return unless File.exist?(CACHE_FILE)
-      payload    = JSON.parse(File.read(CACHE_FILE))
+      source_file = if File.exist?(CACHE_FILE)
+                      CACHE_FILE
+                    elsif File.exist?(LEGACY_CACHE_FILE)
+                      LEGACY_CACHE_FILE
+                    else
+                      return
+                    end
+
+      payload    = JSON.parse(File.read(source_file))
       raw_cache  = payload['cache']      || {}
       raw_stamps = payload['timestamps'] || {}
 
@@ -660,6 +884,9 @@ class MarketDataService
       raw_stamps.each do |k, ts|
         @cache_timestamps[k] = ts ? Time.parse(ts) : nil
       end
+
+      # One-time migration: write legacy tmp cache into the new .cache location.
+      save_to_disk if source_file == LEGACY_CACHE_FILE
     rescue StandardError => e
       warn "[MarketDataService] Failed to load cache from disk: #{e.message}"
     end
@@ -686,5 +913,34 @@ class MarketDataService
         value  # quote data keeps string keys as-is
       end
     end
+
+    # Parses a cache key into [type, symbol, period]
+    def _parse_cache_key(key)
+      if key.start_with?('analyst:')
+        ['analyst', key.sub('analyst:', ''), nil]
+      elsif key.start_with?('profile:')
+        ['profile', key.sub('profile:', ''), nil]
+      elsif key.start_with?('candle:')
+        parts = key.split(':')  # ["candle", "SYMBOL", "PERIOD"]
+        ['candle', parts[1], parts[2]]
+      else
+        ['quote', key, nil]
+      end
+    end
+
+    # Load disk cache immediately at class load so data survives restarts.
+    # Must be defined AFTER load_from_disk so it can call it.
+    def _boot_load
+      if File.exist?(CACHE_FILE)
+        load_from_disk
+        puts "[MarketDataService] Cache loaded from #{CACHE_FILE} (#{@persistent_cache.size} entries)"
+      else
+        puts "[MarketDataService] No disk cache found at #{CACHE_FILE} — starting with empty cache"
+      end
+    rescue StandardError => e
+      warn "[MarketDataService] Failed to load disk cache at #{CACHE_FILE}: #{e.message}"
+    end
   end
+
+  _boot_load
 end

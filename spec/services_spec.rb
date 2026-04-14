@@ -63,13 +63,17 @@ RSpec.describe MarketDataService do
 
   describe '.quote (missing API key)' do
     it 'emits a warning to stderr when API key is absent' do
-      MarketDataService.bust_cache!
+      MarketDataService.clear_all_caches!
       saved_key = ENV.delete('ALPHA_VANTAGE_API_KEY')
+      saved_tiingo = ENV.delete('TIINGO_API_KEY')
+      saved_finnhub = ENV.delete('FINNHUB_API_KEY')
       saved_rack = ENV.delete('RACK_ENV')
       begin
         expect { MarketDataService.quote('SPY') }.to output(/ALPHA_VANTAGE_API_KEY is not set/).to_stderr
       ensure
         ENV['ALPHA_VANTAGE_API_KEY'] = saved_key if saved_key
+        ENV['TIINGO_API_KEY'] = saved_tiingo if saved_tiingo
+        ENV['FINNHUB_API_KEY'] = saved_finnhub if saved_finnhub
         ENV['RACK_ENV'] = saved_rack if saved_rack
       end
     end
@@ -211,6 +215,92 @@ RSpec.describe MarketDataService do
       expect(profile).to be_a(Hash)
       expect(profile[:name]).to include('S&P 500')
       expect(profile[:exchange]).to eq('NYSE Arca')
+    end
+  end
+
+  describe '.cache_summary' do
+    before { MarketDataService.clear_all_caches! }
+
+    it 'returns an empty array when no entries exist' do
+      expect(MarketDataService.cache_summary).to eq([])
+    end
+
+    it 'derives type :quote for plain symbol keys' do
+      MarketDataService.send(:store_cache, 'AAPL', { price: '100' })
+      entry = MarketDataService.cache_summary.find { |e| e[:key] == 'AAPL' }
+      expect(entry[:type]).to eq('quote')
+      expect(entry[:symbol]).to eq('AAPL')
+      expect(entry[:period]).to be_nil
+    end
+
+    it 'derives type :analyst for analyst: prefixed keys' do
+      MarketDataService.send(:store_cache, 'analyst:AAPL', { buy: 5 })
+      entry = MarketDataService.cache_summary.find { |e| e[:key] == 'analyst:AAPL' }
+      expect(entry[:type]).to eq('analyst')
+      expect(entry[:symbol]).to eq('AAPL')
+    end
+
+    it 'derives type :profile for profile: prefixed keys' do
+      MarketDataService.send(:store_cache, 'profile:MSFT', { name: 'Microsoft' })
+      entry = MarketDataService.cache_summary.find { |e| e[:key] == 'profile:MSFT' }
+      expect(entry[:type]).to eq('profile')
+      expect(entry[:symbol]).to eq('MSFT')
+    end
+
+    it 'derives type :candle and captures period for candle: prefixed keys' do
+      MarketDataService.send(:store_cache, 'candle:SPY:1y', [{ t: 1, o: 100 }])
+      entry = MarketDataService.cache_summary.find { |e| e[:key] == 'candle:SPY:1y' }
+      expect(entry[:type]).to eq('candle')
+      expect(entry[:symbol]).to eq('SPY')
+      expect(entry[:period]).to eq('1y')
+    end
+
+    it 'sets is_stale false for live cache entries' do
+      MarketDataService.send(:store_cache, 'AAPL', { price: '100' })
+      entry = MarketDataService.cache_summary.find { |e| e[:key] == 'AAPL' }
+      expect(entry[:is_stale]).to be false
+    end
+
+    it 'sets is_stale true when entry is only in persistent cache' do
+      MarketDataService.send(:store_cache, 'AAPL', { price: '100' })
+      MarketDataService.bust_cache!
+      entry = MarketDataService.cache_summary.find { |e| e[:key] == 'AAPL' }
+      expect(entry[:is_stale]).to be true
+    end
+
+    it 'returns cached_at timestamp for stored entries' do
+      MarketDataService.send(:store_cache, 'AAPL', { price: '100' })
+      entry = MarketDataService.cache_summary.find { |e| e[:key] == 'AAPL' }
+      expect(entry[:cached_at]).to be_a(Time)
+    end
+
+    it 'marks entry stale when cached_at is older than CACHE_TTL' do
+      key = 'candle:SPY:1y'
+      MarketDataService.send(:store_cache, key, [{ date: '2026-01-01', close: 100.0 }])
+      old_ts = Time.now - MarketDataService::CACHE_TTL - 60
+      MarketDataService.instance_variable_get(:@cache_timestamps)[key] = old_ts
+
+      entry = MarketDataService.cache_summary.find { |e| e[:key] == key }
+      expect(entry[:is_stale]).to be true
+    end
+  end
+
+  describe '.historical with expired cache' do
+    it 'does not serve a live historical entry older than CACHE_TTL' do
+      key = 'candle:SPY:1y'
+      points = [{ date: '2026-01-01', close: 100.0 }]
+      MarketDataService.send(:store_cache, key, points)
+      MarketDataService.instance_variable_get(:@cache_timestamps)[key] = Time.now - MarketDataService::CACHE_TTL - 60
+
+      allow(MarketDataService).to receive(:prefetch_all_historical).and_return({})
+      allow(MarketDataService).to receive(:fetch_historical_from_yahoo).and_return(nil)
+      allow(MarketDataService).to receive(:fetch_historical_from_finnhub).and_return(nil)
+      allow(MarketDataService).to receive(:fetch_historical_from_tiingo).and_return(nil)
+      allow(MarketDataService).to receive(:fetch_historical_from_alpha_vantage).and_return(nil)
+
+      result = MarketDataService.historical('SPY', '1y')
+      expect(result).to eq(points)
+      expect(MarketDataService.instance_variable_get(:@cache)[key]).to be_nil
     end
   end
 end

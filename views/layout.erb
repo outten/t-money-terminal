@@ -22,6 +22,9 @@
   </main>
   <footer>
     <small>T Money Terminal &mdash; For informational purposes only. Not financial advice.</small>
+    <% if @cache_updated_at %>
+      <small class="footer-freshness">Data as of <%= @cache_updated_at.strftime('%H:%M') %></small>
+    <% end %>
   </footer>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="/app.js"></script>

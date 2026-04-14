@@ -183,70 +183,36 @@ puts
 # ── Phase 4: Historical Price Data ───────────────────────────────────────────
 
 say 'Phase 4 — Historical Price Data', level: :section
-say "Strategy: Tiingo (primary) → Yahoo Finance (crumb auth) → Alpha Vantage TIME_SERIES_WEEKLY"
-say "AV efficiency: one API call per symbol populates all 6 period caches"
-say "Rate limit: #{AV_SLEEP}s pause after each AV call (Tiingo has no per-call rate limit concern)"
+say 'Strategy: Yahoo Finance (primary) → Finnhub candles → Tiingo → Alpha Vantage TIME_SERIES_WEEKLY'
+say 'Historical prefetch prioritizes Yahoo for all periods and caches EOD data'
+say "Rate limit: #{AV_SLEEP}s pause only when AV fallback is used"
 puts
 
 target_symbols.each_with_index do |symbol, i|
   say "#{symbol}: fetching historical data for all periods (#{HISTORICAL_PERIODS.join(', ')})…"
 
-  if tiingo_ok
-    results = MarketDataService.prefetch_all_historical(symbol)
-    fetched = results.count { |_, v| v && !v.empty? }
-    if fetched > 0
-      say "#{symbol}: Tiingo populated #{fetched}/#{HISTORICAL_PERIODS.length} period caches", level: :ok
-      HISTORICAL_PERIODS.each do |period|
-        pts = results[period]
-        pts ? say("  #{period.upcase}: #{pts.length} points", level: :ok) : say("  #{period.upcase}: no data", level: :skip)
-      end
-      puts
-      next
-    else
-      say "#{symbol}: Tiingo returned no data — falling back to Yahoo/AV", level: :warn
-    end
+  results = MarketDataService.prefetch_all_historical(symbol)
+  fetched = results.count { |_, v| v && !v.empty? }
+
+  if results[:rate_limited]
+    say "#{symbol}: Alpha Vantage rate limit hit during fallback (daily quota may be exhausted)", level: :warn
   end
 
-  # Tiingo unavailable — try Yahoo Finance for 1y (most likely to be populated)
-  yahoo_result = MarketDataService.historical(symbol, '1y')
-  if yahoo_result && !yahoo_result.empty?
-    say "#{symbol}: Yahoo returned #{yahoo_result.length} data points for 1y", level: :ok
-    # Fetch remaining periods from Yahoo as well
-    (HISTORICAL_PERIODS - ['1y']).each do |period|
-      r = MarketDataService.historical(symbol, period)
-      if r && !r.empty?
-        say "  #{period.upcase}: #{r.length} points", level: :ok
+  if fetched > 0
+    say "#{symbol}: populated #{fetched}/#{HISTORICAL_PERIODS.length} period caches", level: :ok
+    HISTORICAL_PERIODS.each do |period|
+      pts = results[period]
+      if pts && !pts.empty?
+        say "  #{period.upcase}: #{pts.length} points", level: :ok
       else
-        say "  #{period.upcase}: no data from Yahoo", level: :skip
+        say "  #{period.upcase}: no data", level: :skip
       end
     end
   else
-    say "#{symbol}: Yahoo returned no data — trying Alpha Vantage (1 call → all periods)…", level: :warn
-
-    if av_ok
-      results = MarketDataService.prefetch_all_historical(symbol)
-      if results[:rate_limited]
-        say "#{symbol}: Alpha Vantage rate limit hit (daily quota may be exhausted)", level: :error
-      elsif results.empty?
-        say "#{symbol}: Alpha Vantage returned no data", level: :error
-      else
-        fetched = results.count { |_, v| v && !v.empty? }
-        say "#{symbol}: AV populated #{fetched}/#{HISTORICAL_PERIODS.length} period caches", level: fetched > 0 ? :ok : :warn
-        HISTORICAL_PERIODS.each do |period|
-          pts = results[period]
-          if pts && !pts.empty?
-            say "  #{period.upcase}: #{pts.length} points", level: :ok
-          else
-            say "  #{period.upcase}: no data", level: :skip
-          end
-        end
-      end
-
-      pause(AV_SLEEP, "Alpha Vantage rate limit") if i < target_symbols.length - 1
-    else
-      say "#{symbol}: no historical data — no API keys available", level: :error
-    end
+    say "#{symbol}: no historical data returned from Yahoo/Finnhub/Tiingo/AV", level: :error
   end
+
+  pause(AV_SLEEP, 'Alpha Vantage fallback rate limit') if av_ok && i < target_symbols.length - 1
   puts
 end
 

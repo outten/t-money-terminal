@@ -1,0 +1,59 @@
+<h2>Cache Status</h2>
+<p class="subtitle">In-memory + disk cache state &mdash; <a href="/admin/cache">refresh</a></p>
+
+<% if @cache_entries.empty? %>
+  <div class="notice">No cache entries found. The cache is empty &mdash; visit the dashboard to populate it.</div>
+<% else %>
+  <p class="cache-meta">
+    <%= @cache_entries.size %> entries &mdash;
+    disk cache: <code><%= MarketDataService::CACHE_FILE %></code>
+  </p>
+  <table class="cache-table">
+    <thead>
+      <tr>
+        <th>Key</th>
+        <th>Type</th>
+        <th>Symbol</th>
+        <th>Period</th>
+        <th>Cached At</th>
+        <th>Status</th>
+        <th>Size</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% @cache_entries.each do |entry| %>
+        <tr class="<%= entry[:is_stale] ? 'stale-row' : '' %>">
+          <td><code><%= entry[:key] %></code></td>
+          <td><span class="type-badge type-<%= entry[:type] %>"><%= entry[:type] %></span></td>
+          <td>
+            <% if entry[:symbol] %>
+              <% if MarketDataService::REGIONS.values.flatten.include?(entry[:symbol]) %>
+                <a href="/analysis/<%= entry[:symbol] %>"><%= entry[:symbol] %></a>
+              <% else %>
+                <%= entry[:symbol] %>
+              <% end %>
+            <% end %>
+          </td>
+          <td><%= entry[:period] || '&mdash;' %></td>
+          <td>
+            <% if entry[:cached_at] %>
+              <span title="<%= entry[:cached_at].iso8601 %>">
+                <%= entry[:cached_at].strftime('%b %d, %Y %H:%M') %>
+              </span>
+            <% else %>
+              &mdash;
+            <% end %>
+          </td>
+          <td>
+            <% if entry[:is_stale] %>
+              <span class="signal-badge signal-sell">stale</span>
+            <% else %>
+              <span class="signal-badge signal-buy">fresh</span>
+            <% end %>
+          </td>
+          <td><%= entry[:size] %></td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+<% end %>

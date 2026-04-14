@@ -65,6 +65,13 @@ RSpec.describe TMoneyTerminal do
       expect(last_response.body).to include('SPY')
     end
 
+    it 'refreshes using live-cache bust and redirects' do
+      expect(MarketDataService).to receive(:refresh_symbol_live_cache!).with('SPY')
+      get '/analysis/SPY?refresh=1'
+      expect(last_response.status).to eq(302)
+      expect(last_response.location).to include('/analysis/SPY')
+    end
+
     it 'returns 404 for an unknown symbol' do
       get '/analysis/INVALID'
       expect(last_response.status).to eq(404)
@@ -114,6 +121,22 @@ RSpec.describe TMoneyTerminal do
       get '/api/market/us'
       expect(last_response).to be_ok
       expect(last_response.content_type).to include('application/json')
+    end
+  end
+
+  describe 'GET /admin/cache' do
+    it 'returns 200 when cache has entries' do
+      MarketDataService.send(:store_cache, 'AAPL', { price: '100' })
+      get '/admin/cache'
+      expect(last_response).to be_ok
+      expect(last_response.body).to include('AAPL')
+    end
+
+    it 'returns 200 with empty-state message when cache is empty' do
+      MarketDataService.clear_all_caches!
+      get '/admin/cache'
+      expect(last_response).to be_ok
+      expect(last_response.body).to include('No cache entries found')
     end
   end
 end

@@ -8,6 +8,11 @@ class TMoneyTerminal < Sinatra::Base
   set :views, File.expand_path('../../views', __FILE__)
   set :public_folder, File.expand_path('../../public', __FILE__)
 
+  before do
+    fresh_entries = MarketDataService.cache_summary.reject { |e| e[:is_stale] || e[:cached_at].nil? }
+    @cache_updated_at = fresh_entries.map { |e| e[:cached_at] }.max
+  end
+
   get '/' do
     redirect '/dashboard'
   end
@@ -52,9 +57,10 @@ class TMoneyTerminal < Sinatra::Base
     symbol = params['symbol'].upcase
     halt 404, 'Symbol not found' unless VALID_SYMBOLS.include?(symbol)
 
-    # ?refresh=1 busts all cache entries for this symbol then redirects clean
+    # ?refresh=1 clears live cache entries for this symbol and redirects clean.
+    # Persistent fallback is preserved so historical charts don't go blank under provider throttling.
     if params['refresh'] == '1'
-      MarketDataService.bust_cache_for_symbol!(symbol)
+      MarketDataService.refresh_symbol_live_cache!(symbol)
       redirect "/analysis/#{symbol}", 302
     end
 
@@ -101,6 +107,11 @@ class TMoneyTerminal < Sinatra::Base
   get '/api/quote/alpha/:symbol' do
     content_type :json
     MarketDataService.quote(params['symbol']).to_json
+  end
+
+  get '/admin/cache' do
+    @cache_entries = MarketDataService.cache_summary
+    erb :admin_cache
   end
 end
 
