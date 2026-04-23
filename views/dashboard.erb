@@ -1,5 +1,12 @@
-<h2>Dashboard</h2>
-<p class="subtitle">Global market overview</p>
+<div class="page-header">
+  <div>
+    <h2>Dashboard</h2>
+    <p class="subtitle">Global market overview</p>
+  </div>
+  <form method="POST" action="/refresh/dashboard" style="display: inline;">
+    <button type="submit" class="refresh-btn">🔄 Refresh Data</button>
+  </form>
+</div>
 
 <%= erb :_symbol_table, locals: { quotes: @data[:quotes] } %>
 
@@ -11,8 +18,15 @@
 </div>
 
 <script>
-  const dashData = <%= @data[:quotes].to_json %>;
-  renderSummaryChart('dashboardChart', dashData);
+  // Wait for Chart.js to be fully loaded
+  window.addEventListener('load', function() {
+    const dashData = <%= @data[:quotes].to_json %>;
+    if (typeof Chart !== 'undefined') {
+      renderSummaryChart('dashboardChart', dashData);
+    } else {
+      console.error('Chart.js not loaded');
+    }
+  });
 </script>
 
 <% if @signals && !@signals.empty? %>

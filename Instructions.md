@@ -7,7 +7,7 @@
 
 ## 2. Alpha Vantage API Key
 
-The application uses Alpha Vantage for real-time market data. Market data is cached for 24 hours to stay within the free tier limits.
+The application uses Alpha Vantage for real-time market data. Market data is cached for 1 hour to stay within the free tier limits.
 
 1. Register for a **free API key** at: https://www.alphavantage.co/support/#api-key
 2. Copy your key.
@@ -38,13 +38,17 @@ Navigate to http://localhost:4567 in your browser.
 
 ## 5. Refreshing Market Data Cache
 
-Data is cached for **24 hours**. To manually refresh:
+Data is cached for **1 hour**. To manually refresh:
 
+**Option 1: UI Button**
+Click the **🔄 Refresh Data** button on any page (Dashboard, US Markets, Japan, Europe, Analysis).
+
+**Option 2: Command Line**
 ```bash
 make refresh-cache
 ```
 
-This runs `scripts/refresh_cache.rb` which busts the in-memory cache on the next request.
+This runs `scripts/refresh_cache.rb` which busts the disk cache and refetches from providers (respects rate limits).
 
 ## 6. Interpreting Recommendations
 

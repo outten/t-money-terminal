@@ -16,25 +16,60 @@ document.addEventListener('DOMContentLoaded', function() {
 
 function renderSummaryChart(id, data) {
   const ctx = document.getElementById(id);
-  if (!ctx || !data.length) return;
-  new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: data.map(d => d.symbol),
-      datasets: [{
-        label: 'Price',
-        data: data.map(d => parseFloat(d.price) || 0),
-        backgroundColor: data.map(d =>
-          d.signal === 'BUY' ? '#34c75966' : d.signal === 'SELL' ? '#ff3b3066' : '#aeaeb266'
-        ),
-        borderColor: data.map(d =>
-          d.signal === 'BUY' ? '#34c759' : d.signal === 'SELL' ? '#ff3b30' : '#aeaeb2'
-        ),
-        borderWidth: 1.5
-      }]
-    },
-    options: { responsive: true, plugins: { legend: { display: false } } }
-  });
+  if (!ctx) {
+    console.error('Canvas element not found:', id);
+    return;
+  }
+  if (!data || !data.length) {
+    console.warn('No data provided for chart:', id);
+    return;
+  }
+  
+  try {
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: data.map(d => d.symbol),
+        datasets: [{
+          label: 'Price',
+          data: data.map(d => parseFloat(d.price) || 0),
+          backgroundColor: data.map(d =>
+            d.signal === 'BUY' ? '#34c75966' : d.signal === 'SELL' ? '#ff3b3066' : '#aeaeb266'
+          ),
+          borderColor: data.map(d =>
+            d.signal === 'BUY' ? '#34c759' : d.signal === 'SELL' ? '#ff3b30' : '#aeaeb2'
+          ),
+          borderWidth: 1.5
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { 
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                return context.dataset.label + ': $' + context.parsed.y.toFixed(2);
+              }
+            }
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: false,
+            ticks: {
+              callback: function(value) {
+                return '$' + value.toFixed(0);
+              }
+            }
+          }
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error rendering summary chart:', error);
+  }
 }
 
 function renderPriceChart(id, data) {

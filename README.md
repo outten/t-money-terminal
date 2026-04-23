@@ -5,7 +5,7 @@ A next-generation, open-source investment terminal inspired by the Bloomberg Ter
 ## Features
 - **Multi-page navigation**: Dashboard, US Markets, Japan, Europe, Recommendations
 - **Real-time market data** via Alpha Vantage (SPY, AAPL, MSFT, EWJ, VGK)
-- **24-hour data caching** with manual refresh via `make refresh-cache`  
+- **1-hour data caching** with manual refresh via UI **REFRESH** buttons or `make refresh-cache`  
 - **Buy/Sell/Hold recommendations** based on price momentum signals
 - **Charts & visualizations** — line, bar, and summary charts via Chart.js
 - Light/dark mode toggle (persisted across sessions)
@@ -39,7 +39,8 @@ make test
 
 ### Refresh Data Cache
 ```bash
-make refresh-cache
+make refresh-cache     # CLI refresh (respects rate limits)
+# OR click "🔄 Refresh Data" button in the UI on any page
 ```
 
 ## Pages

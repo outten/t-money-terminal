@@ -139,4 +139,49 @@ RSpec.describe TMoneyTerminal do
       expect(last_response.body).to include('No cache entries found')
     end
   end
+  
+  describe 'POST /refresh/dashboard' do
+    it 'busts cache for all symbols and redirects to dashboard' do
+      all_symbols = MarketDataService::REGIONS.values.flatten.uniq
+      all_symbols.each do |symbol|
+        expect(MarketDataService).to receive(:bust_cache_for_symbol!).with(symbol)
+      end
+      
+      post '/refresh/dashboard'
+      expect(last_response.status).to eq(302)
+      expect(last_response.location).to include('/dashboard')
+    end
+  end
+  
+  describe 'POST /refresh/region/:name' do
+    it 'busts cache for US region symbols and redirects' do
+      MarketDataService::REGIONS[:us].each do |symbol|
+        expect(MarketDataService).to receive(:bust_cache_for_symbol!).with(symbol)
+      end
+      
+      post '/refresh/region/us'
+      expect(last_response.status).to eq(302)
+      expect(last_response.location).to include('/region/us')
+    end
+    
+    it 'returns 404 for unknown region' do
+      post '/refresh/region/unknown'
+      expect(last_response.status).to eq(404)
+    end
+  end
+  
+  describe 'POST /refresh/analysis/:symbol' do
+    it 'busts cache for single symbol and redirects to analysis page' do
+      expect(MarketDataService).to receive(:bust_cache_for_symbol!).with('SPY')
+      
+      post '/refresh/analysis/SPY'
+      expect(last_response.status).to eq(302)
+      expect(last_response.location).to include('/analysis/SPY')
+    end
+    
+    it 'returns 404 for unknown symbol' do
+      post '/refresh/analysis/INVALID'
+      expect(last_response.status).to eq(404)
+    end
+  end
 end

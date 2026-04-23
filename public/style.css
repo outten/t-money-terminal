@@ -45,6 +45,22 @@ button#theme-toggle {
 main { max-width: 1100px; margin: 2rem auto; padding: 0 1.5rem; }
 h2 { font-size: 1.6rem; font-weight: 700; margin-bottom: 0.25rem; }
 .subtitle { color: #6e6e73; margin-bottom: 1.25rem; font-size: 0.95rem; }
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1.5rem;
+  gap: 1rem;
+}
+.page-header > div:first-child {
+  flex: 1;
+}
+.page-header .refresh-btn {
+  margin-top: 0.25rem;
+  cursor: pointer;
+}
+
 .notice {
   background: #fff3cd;
   border: 1px solid #ffc107;
@@ -110,6 +126,7 @@ h2 { font-size: 1.6rem; font-weight: 700; margin-bottom: 0.25rem; }
   box-shadow: 0 1px 4px rgba(0,0,0,0.06);
 }
 .chart-box h3 { font-size: 1rem; margin-bottom: 0.5rem; color: #1d1d1f; }
+.chart-box canvas { min-height: 300px; }
 footer {
   text-align: center;
   padding: 1.5rem;

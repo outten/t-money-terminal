@@ -1,5 +1,12 @@
-<h2>US Markets</h2>
-<p class="subtitle">United States — SPY, AAPL, MSFT</p>
+<div class="page-header">
+  <div>
+    <h2>US Markets</h2>
+    <p class="subtitle">United States — SPY, AAPL, MSFT</p>
+  </div>
+  <form method="POST" action="/refresh/region/us" style="display: inline;">
+    <button type="submit" class="refresh-btn">🔄 Refresh Data</button>
+  </form>
+</div>
 <% if @data[:stale] %>
   <div class="notice">Data may be delayed — last updated: <%= @data[:updated_at] %></div>
 <% end %>

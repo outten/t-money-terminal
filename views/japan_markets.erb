@@ -1,5 +1,12 @@
-<h2>Japan Markets</h2>
-<p class="subtitle">Japan — EWJ (iShares MSCI Japan ETF proxy)</p>
+<div class="page-header">
+  <div>
+    <h2>Japan Markets</h2>
+    <p class="subtitle">Japan — EWJ (iShares MSCI Japan ETF proxy)</p>
+  </div>
+  <form method="POST" action="/refresh/region/japan" style="display: inline;">
+    <button type="submit" class="refresh-btn">🔄 Refresh Data</button>
+  </form>
+</div>
 <% if @data[:stale] %>
   <div class="notice">Data may be delayed — last updated: <%= @data[:updated_at] %></div>
 <% end %>

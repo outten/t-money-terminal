@@ -3,7 +3,8 @@
 #
 # Manually refresh all cached market data, respecting API rate limits.
 # This script fetches fresh data from each provider and writes it to the
-# persistent disk cache so the web app serves current data immediately.
+# persistent disk cache (hierarchical structure at data/cache/) so the web app 
+# serves current data immediately.
 #
 # Usage:
 #   bundle exec ruby scripts/refresh_cache.rb       # full refresh
@@ -88,7 +89,7 @@ puts "\e[1m  T Money Terminal — Cache Refresh\e[0m"
 puts "\e[1m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m"
 puts "  Started : #{Time.now.strftime('%Y-%m-%d %H:%M:%S %Z')}"
 puts "  Symbols : #{target_symbols.join(', ')}"
-puts "  Cache   : #{MarketDataService::CACHE_FILE}"
+puts "  Cache   : #{MarketDataService::CACHE_DIR}"
 puts
 
 say 'Checking API keys…', level: :section
@@ -221,11 +222,14 @@ end
 puts "\e[1m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m"
 say "Cache refresh complete", level: :ok
 puts "  Finished : #{Time.now.strftime('%Y-%m-%d %H:%M:%S %Z')}"
-puts "  Cache    : #{MarketDataService::CACHE_FILE}"
+puts "  Cache    : #{MarketDataService::CACHE_DIR}"
 
-if File.exist?(MarketDataService::CACHE_FILE)
-  size_kb = (File.size(MarketDataService::CACHE_FILE) / 1024.0).round(1)
-  puts "  Size     : #{size_kb} KB"
+# Count hierarchical cache files
+cache_files = Dir.glob(File.join(MarketDataService::CACHE_DIR, '**', '*.json'))
+if cache_files.any?
+  total_size_kb = cache_files.sum { |f| File.size(f) } / 1024.0
+  puts "  Files    : #{cache_files.length} cache entries"
+  puts "  Size     : #{total_size_kb.round(1)} KB"
 end
 
 puts "\e[1m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m"

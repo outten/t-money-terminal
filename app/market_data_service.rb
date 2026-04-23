@@ -9,10 +9,11 @@ require 'time'
 require 'fileutils'
 
 class MarketDataService
-  CACHE_TTL  = 86400 # 24 hours
-  CACHE_DIR  = File.expand_path('../../.cache', __FILE__).freeze
+  CACHE_TTL  = 3600 # 1 hour
+  CACHE_DIR  = File.expand_path('../../data/cache', __FILE__).freeze
   CACHE_FILE = File.join(CACHE_DIR, 'market_cache.json').freeze
-  LEGACY_CACHE_FILE = File.expand_path('../../tmp/market_cache.json', __FILE__).freeze
+  LEGACY_CACHE_FILE = File.expand_path('../../.cache/market_cache.json', __FILE__).freeze
+  LEGACY_TMP_CACHE_FILE = File.expand_path('../../tmp/market_cache.json', __FILE__).freeze
 
   REGIONS = {
     us:     %w[SPY QQQ AAPL MSFT GOOGL AMZN NVDA JPM],
@@ -118,6 +119,13 @@ class MarketDataService
       @av_quote_rate_limited_until     = nil
       File.delete(CACHE_FILE) if File.exist?(CACHE_FILE)
       File.delete(LEGACY_CACHE_FILE) if File.exist?(LEGACY_CACHE_FILE)
+      File.delete(LEGACY_TMP_CACHE_FILE) if File.exist?(LEGACY_TMP_CACHE_FILE)
+      
+      # Delete hierarchical cache directories
+      %w[quotes historical analyst profiles other].each do |subdir|
+        dir_path = File.join(CACHE_DIR, subdir)
+        FileUtils.rm_rf(dir_path) if Dir.exist?(dir_path)
+      end
     rescue StandardError
       nil
     end
@@ -130,6 +138,10 @@ class MarketDataService
         @cache.delete(k)
         @persistent_cache.delete(k)
         @cache_timestamps.delete(k)
+        
+        # Delete hierarchical cache files
+        type, sym, period = _parse_cache_key(k)
+        delete_cache_entry(type, sym, period)
       end
       # If all live-cache entries are gone reset the global timestamp
       @cache_timestamp = nil if @cache.empty?
@@ -515,6 +527,10 @@ class MarketDataService
       @persistent_cache[key] = value
       @cache_timestamps[key] = Time.now
       save_to_disk
+      
+      # Also write to hierarchical cache
+      type, symbol, period = _parse_cache_key(key)
+      write_cache_entry(type, symbol, value, period)
     end
 
     def fetch_analyst_recommendations(symbol)
@@ -852,6 +868,98 @@ class MarketDataService
     end
 
     # ---- Disk persistence ----
+    
+    # Returns the file path for a hierarchical cache entry
+    def cache_file_path(type, symbol, period = nil)
+      subdir = case type
+               when 'quote'    then 'quotes'
+               when 'analyst'  then 'analyst'
+               when 'profile'  then 'profiles'
+               when 'candle'   then 'historical'
+               else                 'other'
+               end
+      
+      dir = File.join(CACHE_DIR, subdir)
+      FileUtils.mkdir_p(dir) unless test_env?
+      
+      filename = if period
+                   "#{symbol}_#{period}.json"
+                 else
+                   "#{symbol}.json"
+                 end
+      
+      File.join(dir, filename)
+    end
+    
+    # Writes an individual cache entry to disk in hierarchical structure
+    def write_cache_entry(type, symbol, data, period = nil)
+      return if test_env?
+      
+      file_path = cache_file_path(type, symbol, period)
+      payload = {
+        'data' => serialize_value(data),
+        'cached_at' => Time.now.iso8601
+      }
+      
+      File.write(file_path, JSON.generate(payload))
+    rescue StandardError => e
+      warn "[MarketDataService] Failed to write cache entry to #{file_path}: #{e.message}"
+    end
+    
+    # Reads an individual cache entry from disk
+    def read_cache_entry(type, symbol, period = nil)
+      file_path = cache_file_path(type, symbol, period)
+      return nil unless File.exist?(file_path)
+      
+      # Check if file is expired (older than CACHE_TTL)
+      return nil if cache_entry_expired?(file_path)
+      
+      payload = JSON.parse(File.read(file_path))
+      deserialize_value_from_type(type, payload['data'])
+    rescue StandardError => e
+      warn "[MarketDataService] Failed to read cache entry from #{file_path}: #{e.message}" unless test_env?
+      nil
+    end
+    
+    # Checks if a cache file is expired based on file modification time
+    def cache_entry_expired?(file_path)
+      return true unless File.exist?(file_path)
+      
+      mtime = File.mtime(file_path)
+      (Time.now - mtime) > CACHE_TTL
+    end
+    
+    # Deletes an individual cache entry from disk
+    def delete_cache_entry(type, symbol, period = nil)
+      file_path = cache_file_path(type, symbol, period)
+      File.delete(file_path) if File.exist?(file_path)
+    rescue StandardError => e
+      warn "[MarketDataService] Failed to delete cache entry at #{file_path}: #{e.message}" unless test_env?
+    end
+    
+    # Serializes a value for JSON storage
+    def serialize_value(value)
+      case value
+      when Array
+        value.map { |item| item.is_a?(Hash) ? item.transform_keys(&:to_s) : item }
+      when Hash
+        value.transform_keys(&:to_s)
+      else
+        value
+      end
+    end
+    
+    # Deserializes a value based on its type
+    def deserialize_value_from_type(type, value)
+      case type
+      when 'analyst', 'profile'
+        value.is_a?(Hash) ? value.transform_keys(&:to_sym) : value
+      when 'candle'
+        value.is_a?(Array) ? value.map { |h| h.is_a?(Hash) ? h.transform_keys(&:to_sym) : h } : value
+      else
+        value  # quote data keeps string keys as-is
+      end
+    end
 
     def save_to_disk
       return if test_env?
@@ -866,27 +974,32 @@ class MarketDataService
     end
 
     def load_from_disk
+      # Try to load from monolithic cache files (current or legacy locations)
       source_file = if File.exist?(CACHE_FILE)
                       CACHE_FILE
                     elsif File.exist?(LEGACY_CACHE_FILE)
                       LEGACY_CACHE_FILE
+                    elsif File.exist?(LEGACY_TMP_CACHE_FILE)
+                      LEGACY_TMP_CACHE_FILE
                     else
-                      return
+                      nil
                     end
 
-      payload    = JSON.parse(File.read(source_file))
-      raw_cache  = payload['cache']      || {}
-      raw_stamps = payload['timestamps'] || {}
+      if source_file
+        payload    = JSON.parse(File.read(source_file))
+        raw_cache  = payload['cache']      || {}
+        raw_stamps = payload['timestamps'] || {}
 
-      raw_cache.each do |k, v|
-        @persistent_cache[k] = deserialize_value(k, v)
-      end
-      raw_stamps.each do |k, ts|
-        @cache_timestamps[k] = ts ? Time.parse(ts) : nil
-      end
+        raw_cache.each do |k, v|
+          @persistent_cache[k] = deserialize_value(k, v)
+        end
+        raw_stamps.each do |k, ts|
+          @cache_timestamps[k] = ts ? Time.parse(ts) : nil
+        end
 
-      # One-time migration: write legacy tmp cache into the new .cache location.
-      save_to_disk if source_file == LEGACY_CACHE_FILE
+        # One-time migration: write legacy cache into the new location.
+        save_to_disk if source_file != CACHE_FILE
+      end
     rescue StandardError => e
       warn "[MarketDataService] Failed to load cache from disk: #{e.message}"
     end

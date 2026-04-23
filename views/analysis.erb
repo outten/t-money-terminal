@@ -16,9 +16,11 @@
       <span class="signal signal-<%= @signal.downcase %> signal-lg"><%= @signal %></span>
       <span class="signal-type-label"><%= @signal_type %></span>
     </div>
-    <a href="/analysis/<%= @symbol %>?refresh=1" class="refresh-btn" title="Bust cache and reload live data">
-      &#8635; Refresh
-    </a>
+    <form method="POST" action="/refresh/analysis/<%= @symbol %>" style="display: inline;">
+      <button type="submit" class="refresh-btn" title="Bust cache and reload live data">
+        &#8635; Refresh
+      </button>
+    </form>
   </div>
 </div>
 

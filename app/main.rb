@@ -41,6 +41,33 @@ class TMoneyTerminal < Sinatra::Base
   get '/recommendations' do
     redirect '/dashboard', 301
   end
+  
+  # Refresh routes for manual cache busting
+  post '/refresh/dashboard' do
+    # Refresh all symbols across all regions
+    symbols = MarketDataService::REGIONS.values.flatten.uniq
+    symbols.each { |s| MarketDataService.bust_cache_for_symbol!(s) }
+    redirect '/dashboard', 302
+  end
+  
+  post '/refresh/region/:name' do
+    # Refresh symbols for specific region
+    region_name = params['name'].downcase
+    halt 404, 'Region not found' unless VALID_REGION_NAMES.include?(region_name)
+    
+    symbols = MarketDataService::REGIONS[region_name.to_sym]
+    symbols.each { |s| MarketDataService.bust_cache_for_symbol!(s) }
+    redirect "/region/#{region_name}", 302
+  end
+  
+  post '/refresh/analysis/:symbol' do
+    # Refresh single symbol
+    symbol = params['symbol'].upcase
+    halt 404, 'Symbol not found' unless VALID_SYMBOLS.include?(symbol)
+    
+    MarketDataService.bust_cache_for_symbol!(symbol)
+    redirect "/analysis/#{symbol}", 302
+  end
 
   VALID_SYMBOLS      = (MarketDataService::REGIONS.values.flatten).freeze
   VALID_REGION_NAMES = MarketDataService::REGIONS.keys.map(&:to_s).freeze

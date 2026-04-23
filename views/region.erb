@@ -1,5 +1,12 @@
-<h2><%= @region_label %> Markets</h2>
-<p class="subtitle"><%= @region_label %> — regional market overview</p>
+<div class="page-header">
+  <div>
+    <h2><%= @region_label %> Markets</h2>
+    <p class="subtitle"><%= @region_label %> — regional market overview</p>
+  </div>
+  <form method="POST" action="/refresh/region/<%= params['name'] %>" style="display: inline;">
+    <button type="submit" class="refresh-btn">🔄 Refresh Data</button>
+  </form>
+</div>
 
 <% if @data[:stale] %>
 <div class="notice">Data may be delayed — last updated: <%= @data[:updated_at] %></div>

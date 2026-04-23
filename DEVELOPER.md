@@ -33,9 +33,11 @@ make refresh-cache  # bust data cache on next request
 ```
 
 ## Caching
-- Market data is cached in-memory for **24 hours** (`MarketDataService::CACHE_TTL`)
-- Run `make refresh-cache` or call `MarketDataService.bust_cache!` to clear
+- Market data is cached in **hierarchical disk files** at `data/cache/` for **1 hour** (`MarketDataService::CACHE_TTL = 3600`)
+- Cache structure: `data/cache/{quotes,historical,analyst,profiles}/SYMBOL[_PERIOD].json`
+- Run `make refresh-cache` or click **REFRESH** button in UI to clear and refetch
 - Fallback to `MOCK_PRICES` when cache is empty and API key is absent
+- Legacy monolithic cache at `.cache/market_cache.json` auto-migrates on first load
 
 ## Signals
 - `RecommendationService` issues BUY/SELL/HOLD based on price change percent
