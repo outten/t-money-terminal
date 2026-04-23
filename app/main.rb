@@ -3,6 +3,7 @@ require 'dotenv'
 Dotenv.load(File.expand_path('../../.credentials', __FILE__))
 require_relative 'market_data_service'
 require_relative 'recommendation_service'
+require_relative 'providers'
 
 class TMoneyTerminal < Sinatra::Base
   set :views, File.expand_path('../../views', __FILE__)
@@ -20,6 +21,13 @@ class TMoneyTerminal < Sinatra::Base
   get '/dashboard' do
     @data    = MarketDataService.summary
     @signals = RecommendationService.signals
+    @macro   = safe_fetch { Providers::FredService.macro_snapshot } || {}
+    @intl_indices = safe_fetch do
+      %i[nikkei dax ftse cac hang_seng].each_with_object({}) do |key, acc|
+        row = Providers::StooqService.index(key)
+        acc[key] = row if row
+      end
+    end || {}
     erb :dashboard
   end
 
@@ -100,6 +108,17 @@ class TMoneyTerminal < Sinatra::Base
     @signal_type = detail[:signal_type]
     @historical  = MarketDataService.historical(symbol, '1y')
 
+    # Provider-sourced enrichment (all calls are cache-first and return nil on
+    # missing keys / errors, so the page still renders if a provider is down).
+    is_etf        = MarketDataService::SYMBOL_TYPES[symbol] == 'ETF'
+    @news         = safe_fetch { Providers::NewsService.company_news(symbol, days: 7, limit: 8) }
+    unless is_etf
+      @key_metrics  = safe_fetch { Providers::FmpService.key_metrics(symbol, limit: 1)&.first }
+      @ratios       = safe_fetch { Providers::FmpService.ratios(symbol, limit: 1)&.first }
+      @dcf          = safe_fetch { Providers::FmpService.dcf(symbol) }
+      @earnings     = safe_fetch { Providers::FmpService.next_earnings(symbol) }
+    end
+
     # Determine if any data is stale (served from persistent fallback cache)
     stale_keys  = [symbol, "analyst:#{symbol}", "profile:#{symbol}", "candle:#{symbol}:1y"]
     stale_infos = stale_keys.map { |k| MarketDataService.cache_info_for(k) }.select { |i| i[:is_stale] }
@@ -139,6 +158,43 @@ class TMoneyTerminal < Sinatra::Base
   get '/admin/cache' do
     @cache_entries = MarketDataService.cache_summary
     erb :admin_cache
+  end
+
+  helpers do
+    # Wrap provider calls so any failure (missing key, network error, parse
+    # error) yields nil instead of 500ing the page.
+    def safe_fetch
+      yield
+    rescue StandardError => e
+      warn "[safe_fetch] #{e.class}: #{e.message}" unless ENV['RACK_ENV'] == 'test'
+      nil
+    end
+
+    # Format a large dollar amount as $X.XXB / $X.XXT / $X.XM.
+    def format_money(value)
+      return 'N/A' if value.nil?
+      n = value.to_f
+      return '$0' if n.zero?
+
+      abs = n.abs
+      sign = n.negative? ? '-' : ''
+      if abs >= 1e12 then "#{sign}$#{format('%.2f', abs / 1e12)}T"
+      elsif abs >= 1e9  then "#{sign}$#{format('%.2f', abs / 1e9)}B"
+      elsif abs >= 1e6  then "#{sign}$#{format('%.2f', abs / 1e6)}M"
+      elsif abs >= 1e3  then "#{sign}$#{format('%.2f', abs / 1e3)}K"
+      else                   "#{sign}$#{format('%.2f', abs)}"
+      end
+    end
+
+    # Format a ratio/multiplier (e.g. P/E) to 2 decimals, or em-dash if nil.
+    def format_ratio(value)
+      value.nil? ? '—' : format('%.2f', value.to_f)
+    end
+
+    # Format a decimal fraction as percent, e.g. 0.214 → "21.4%".
+    def format_percent(value, digits: 2)
+      value.nil? ? '—' : "#{format("%.#{digits}f", value.to_f * 100)}%"
+    end
   end
 end
 

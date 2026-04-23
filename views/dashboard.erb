@@ -8,6 +8,49 @@
   </form>
 </div>
 
+<% if @macro && @macro.values.any? %>
+<section class="macro-panel">
+  <h3>Macro Snapshot</h3>
+  <div class="macro-grid">
+    <% macro_cards = [
+      [:fed_funds,     'Fed Funds',     '%'],
+      [:treasury_3mo,  '3-Mo Treasury', '%'],
+      [:treasury_10yr, '10-Yr Treasury','%'],
+      [:cpi,           'CPI (Index)',   nil],
+      [:unemployment,  'Unemployment',  '%'],
+      [:vix,           'VIX',           nil]
+    ] %>
+    <% macro_cards.each do |key, label, unit| %>
+      <% row = @macro[key] %>
+      <% next unless row %>
+      <div class="macro-card">
+        <span class="field-label"><%= label %></span>
+        <span class="field-value"><%= row[:value] %><%= unit %></span>
+        <span class="macro-date"><%= row[:date] %></span>
+      </div>
+    <% end %>
+  </div>
+  <p class="data-source">Source: FRED (St. Louis Fed)</p>
+</section>
+<% end %>
+
+<% if @intl_indices && !@intl_indices.empty? %>
+<section class="macro-panel">
+  <h3>International Indices</h3>
+  <div class="macro-grid">
+    <% index_labels = { nikkei: 'Nikkei 225', dax: 'DAX', ftse: 'FTSE 100', cac: 'CAC 40', hang_seng: 'Hang Seng' } %>
+    <% @intl_indices.each do |key, row| %>
+      <div class="macro-card">
+        <span class="field-label"><%= index_labels[key] || key.to_s %></span>
+        <span class="field-value"><%= row[:close] ? format('%.2f', row[:close]) : '—' %></span>
+        <span class="macro-date"><%= row[:date] %></span>
+      </div>
+    <% end %>
+  </div>
+  <p class="data-source">Source: Stooq</p>
+</section>
+<% end %>
+
 <%= erb :_symbol_table, locals: { quotes: @data[:quotes] } %>
 
 <div class="chart-row">

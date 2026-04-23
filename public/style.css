@@ -307,6 +307,46 @@ body.dark .refresh-btn:hover { background: #48484a; }
 .period-btn:hover { background: #e5e5ea; }
 .period-btn.active { background: #0071e3; color: #fff; border-color: #0071e3; }
 
+/* Macro snapshot panel (dashboard) */
+.macro-panel {
+  background: #fff;
+  border-radius: 14px;
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.25rem;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+}
+.macro-panel h3 { margin: 0 0 0.75rem 0; font-size: 1rem; color: #1d1d1f; }
+.macro-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.75rem 1rem;
+}
+.macro-card {
+  display: flex;
+  flex-direction: column;
+  padding: 0.6rem 0.75rem;
+  background: #f5f5f7;
+  border-radius: 8px;
+}
+.macro-card .field-value { font-size: 1.1rem; font-weight: 600; color: #1d1d1f; margin-top: 0.15rem; }
+.macro-date { font-size: 0.7rem; color: #8e8e93; margin-top: 0.2rem; }
+
+/* News panel (analysis page) */
+.news-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 1rem; }
+.news-item { padding-bottom: 1rem; border-bottom: 1px solid #f2f2f7; }
+.news-item:last-child { border-bottom: none; padding-bottom: 0; }
+.news-headline {
+  font-size: 0.96rem;
+  font-weight: 600;
+  color: #0071e3;
+  text-decoration: none;
+  line-height: 1.4;
+}
+.news-headline:hover { text-decoration: underline; }
+.news-meta { display: flex; gap: 0.75rem; margin-top: 0.3rem; font-size: 0.78rem; color: #8e8e93; }
+.news-source { font-weight: 500; }
+.news-summary { margin: 0.45rem 0 0; font-size: 0.88rem; line-height: 1.5; color: #3a3a3c; }
+
 /* Dark mode extensions */
 body.dark .market-signals-section h3 { color: #f5f5f7; }
 body.dark .signal-card { background: #2c2c2e; box-shadow: none; }
@@ -338,3 +378,10 @@ body.dark .type-candle  { background: #003318; color: #44cc77; }
 body.dark .type-analyst { background: #330000; color: #ff8080; }
 body.dark .type-profile { background: #001133; color: #6699ff; }
 body.dark .type-quote   { background: #2c2c2e; color: #aeaeb2; }
+body.dark .macro-panel { background: #2c2c2e; box-shadow: none; }
+body.dark .macro-panel h3 { color: #f5f5f7; }
+body.dark .macro-card { background: #1c1c1e; }
+body.dark .macro-card .field-value { color: #f5f5f7; }
+body.dark .news-item { border-bottom-color: #3a3a3c; }
+body.dark .news-headline { color: #0a84ff; }
+body.dark .news-summary { color: #aeaeb2; }
