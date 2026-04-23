@@ -112,6 +112,116 @@
   <p class="data-source">Source: Tiingo / Alpha Vantage / Finnhub / Yahoo Finance</p>
 </section>
 
+<!-- Key Metrics & Ratios (FMP) -->
+<% if @key_metrics || @ratios %>
+<section class="analysis-section">
+  <h3>Fundamentals & Ratios</h3>
+  <div class="profile-grid">
+    <div class="profile-fields">
+      <% m = @key_metrics || {} %>
+      <% r = @ratios || {} %>
+      <% pe   = r[:priceToEarningsRatio] %>
+      <% pb   = r[:priceToBookRatio] %>
+      <% ps   = r[:priceToSalesRatio] %>
+      <% roe  = m[:returnOnEquity] || r[:returnOnEquity] %>
+      <% roa  = m[:returnOnAssets] || r[:returnOnAssets] %>
+      <% de   = r[:debtToEquityRatio] %>
+      <% cr   = m[:currentRatio] || r[:currentRatio] %>
+      <% gm   = r[:grossProfitMargin] %>
+      <% om   = r[:operatingProfitMargin] %>
+      <% nm   = r[:netProfitMargin] %>
+      <% dy   = r[:dividendYield] %>
+      <% fcfy = m[:freeCashFlowYield] %>
+      <% eyp  = m[:earningsYield] %>
+      <div class="profile-field"><span class="field-label">P/E</span><span class="field-value"><%= format_ratio(pe) %></span></div>
+      <div class="profile-field"><span class="field-label">P/B</span><span class="field-value"><%= format_ratio(pb) %></span></div>
+      <div class="profile-field"><span class="field-label">P/S</span><span class="field-value"><%= format_ratio(ps) %></span></div>
+      <div class="profile-field"><span class="field-label">ROE</span><span class="field-value"><%= format_percent(roe) %></span></div>
+      <div class="profile-field"><span class="field-label">ROA</span><span class="field-value"><%= format_percent(roa) %></span></div>
+      <div class="profile-field"><span class="field-label">Debt / Equity</span><span class="field-value"><%= format_ratio(de) %></span></div>
+      <div class="profile-field"><span class="field-label">Current Ratio</span><span class="field-value"><%= format_ratio(cr) %></span></div>
+      <div class="profile-field"><span class="field-label">Gross Margin</span><span class="field-value"><%= format_percent(gm) %></span></div>
+      <div class="profile-field"><span class="field-label">Operating Margin</span><span class="field-value"><%= format_percent(om) %></span></div>
+      <div class="profile-field"><span class="field-label">Net Margin</span><span class="field-value"><%= format_percent(nm) %></span></div>
+      <div class="profile-field"><span class="field-label">Dividend Yield</span><span class="field-value"><%= format_percent(dy) %></span></div>
+      <div class="profile-field"><span class="field-label">FCF Yield</span><span class="field-value"><%= format_percent(fcfy) %></span></div>
+      <div class="profile-field"><span class="field-label">Earnings Yield</span><span class="field-value"><%= format_percent(eyp) %></span></div>
+    </div>
+  </div>
+  <p class="data-source">Source: Financial Modeling Prep — period: <%= (m[:date] || r[:date] || 'latest') %></p>
+</section>
+<% end %>
+
+<!-- DCF Intrinsic Value (FMP) -->
+<% if @dcf %>
+<section class="analysis-section">
+  <h3>DCF Valuation</h3>
+  <% intrinsic = @dcf[:dcf].to_f %>
+  <% current   = @dcf[:'Stock Price']&.to_f || @dcf[:stockPrice].to_f %>
+  <% margin    = current.zero? ? nil : (intrinsic - current) / current %>
+  <div class="profile-grid">
+    <div class="profile-fields">
+      <div class="profile-field"><span class="field-label">Intrinsic (DCF)</span><span class="field-value">$<%= format('%.2f', intrinsic) %></span></div>
+      <div class="profile-field"><span class="field-label">Market Price</span><span class="field-value">$<%= format('%.2f', current) %></span></div>
+      <% if margin %>
+      <div class="profile-field">
+        <span class="field-label">Margin of Safety</span>
+        <span class="field-value <%= margin >= 0 ? 'positive' : 'negative' %>"><%= format_percent(margin, digits: 1) %></span>
+      </div>
+      <% end %>
+      <div class="profile-field"><span class="field-label">Valuation Date</span><span class="field-value"><%= @dcf[:date] || '—' %></span></div>
+    </div>
+  </div>
+  <p class="data-source">Source: Financial Modeling Prep DCF</p>
+</section>
+<% end %>
+
+<!-- Upcoming Earnings (FMP) -->
+<% if @earnings %>
+<section class="analysis-section">
+  <h3>Upcoming Earnings</h3>
+  <div class="profile-grid">
+    <div class="profile-fields">
+      <div class="profile-field"><span class="field-label">Date</span><span class="field-value"><%= @earnings[:date] %></span></div>
+      <% if @earnings[:epsEstimated] %>
+      <div class="profile-field"><span class="field-label">EPS Estimate</span><span class="field-value"><%= format_ratio(@earnings[:epsEstimated]) %></span></div>
+      <% end %>
+      <% if @earnings[:revenueEstimated] %>
+      <div class="profile-field"><span class="field-label">Revenue Estimate</span><span class="field-value"><%= format_money(@earnings[:revenueEstimated]) %></span></div>
+      <% end %>
+      <% if @earnings[:time] %>
+      <div class="profile-field"><span class="field-label">Time</span><span class="field-value"><%= @earnings[:time].to_s.upcase %></span></div>
+      <% end %>
+    </div>
+  </div>
+  <p class="data-source">Source: Financial Modeling Prep — earnings calendar</p>
+</section>
+<% end %>
+
+<!-- Latest News (Finnhub / NewsAPI) -->
+<% if @news && !@news.empty? %>
+<section class="analysis-section">
+  <h3>Latest News</h3>
+  <ul class="news-list">
+    <% @news.each do |article| %>
+    <li class="news-item">
+      <a href="<%= article[:url] %>" target="_blank" rel="noopener noreferrer" class="news-headline"><%= article[:headline] %></a>
+      <div class="news-meta">
+        <span class="news-source"><%= article[:source] %></span>
+        <% if article[:datetime] %>
+        <span class="news-date"><%= (Time.parse(article[:datetime].to_s).strftime('%b %d, %H:%M') rescue article[:datetime]) %></span>
+        <% end %>
+      </div>
+      <% if article[:summary] && !article[:summary].to_s.strip.empty? %>
+      <p class="news-summary"><%= article[:summary] %></p>
+      <% end %>
+    </li>
+    <% end %>
+  </ul>
+  <p class="data-source">Source: Finnhub company news (NewsAPI fallback)</p>
+</section>
+<% end %>
+
 <!-- External Links -->
 <section class="analysis-section">
   <h3>External Research</h3>
