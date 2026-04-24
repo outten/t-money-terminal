@@ -38,6 +38,25 @@ Specs: 20 new examples in `@/Users/outten/src/t-money-terminal/spec/providers_sp
 - `Providers::FmpService` switched from `/api/v3/` (paid) to `/stable/` endpoints with query-param symbol. Verified working on the free key.
 - `next_earnings` now uses the shared `/earnings-calendar` endpoint (the per-symbol `/earnings` is paywalled) and filters in Ruby — one calendar fetch serves every symbol.
 
+### Section 2 — Deeper Analysis (P0 + P1 complete ✅)
+
+Pure-Ruby analytics modules under `@/Users/outten/src/t-money-terminal/app/analytics/`, aggregated via `@/Users/outten/src/t-money-terminal/app/analytics.rb`:
+
+| § | Module | File |
+|---|---|---|
+| 2.1 | `Analytics::Indicators` — SMA, EMA, MACD, RSI (Wilder), Bollinger Bands | `@/Users/outten/src/t-money-terminal/app/analytics/indicators.rb` |
+| 2.2 | `Analytics::Risk` — returns, CAGR, ann. vol, Sharpe, Sortino, max DD, VaR (historical + parametric), beta, correlation, date alignment | `@/Users/outten/src/t-money-terminal/app/analytics/risk.rb` |
+| 2.3 | `Analytics::BlackScholes` — European price, full Greeks (Δ/Γ/Vega/Θ/ρ), implied vol (bisection), historical vol | `@/Users/outten/src/t-money-terminal/app/analytics/black_scholes.rb` |
+
+Specs: 37 new examples in `@/Users/outten/src/t-money-terminal/spec/analytics_spec.rb` with textbook golden values (ATM call ≈ 10.4506, Δ ≈ 0.6368, etc). `make test` → **112 examples, 0 failures.**
+
+Wired into `@/Users/outten/src/t-money-terminal/views/analysis.erb`:
+- **Technical Indicators** — SMA 50 / SMA 200 / RSI(14) / MACD(12,26,9) / Bollinger(20, 2σ) with human-readable signal column.
+- **Risk & Performance** — ann. return, ann. vol, Sharpe, Sortino, max DD, VaR 95% (historical + parametric), Beta vs SPY. Uses FRED 3-Mo treasury as the risk-free rate.
+- **Black-Scholes (ATM, 30-day)** — illustrative call/put price + full Greeks using 1-year realised vol and FRED `rf`.
+
+Deferred: §2.4 Monte Carlo, §2.6 portfolio tools. §2.5 DCF is already live via `Providers::FmpService#dcf`.
+
 **Wired into views ✅**
 - `@/Users/outten/src/t-money-terminal/views/analysis.erb` now renders: Fundamentals & Ratios (FMP), DCF Valuation with margin of safety, Upcoming Earnings, Latest News (Finnhub → NewsAPI fallback). Fundamentals/DCF are automatically suppressed for ETFs.
 - `@/Users/outten/src/t-money-terminal/views/dashboard.erb` now shows: Macro Snapshot (Fed Funds, 3-Mo / 10-Yr Treasury, CPI, Unemployment, VIX — FRED) and International Indices (Nikkei, DAX, FTSE, CAC, Hang Seng — Stooq).
@@ -104,7 +123,7 @@ Specs: 20 new examples in `@/Users/outten/src/t-money-terminal/spec/providers_sp
 
 All of these should live in a new `app/analytics/` directory (e.g. `analytics/indicators.rb`, `analytics/black_scholes.rb`, `analytics/risk.rb`). They operate on **already-cached** OHLCV data, so they cost zero API calls.
 
-### 2.1 [P0] Technical indicators computed locally
+### 2.1 [P0] Technical indicators computed locally ✅ implemented
 Implement in pure Ruby from cached historicals:
 - **SMA** (20, 50, 200 day) — trend baseline.
 - **EMA** (12, 26) — input to MACD.
@@ -123,7 +142,7 @@ Implement in pure Ruby from cached historicals:
 
 Weight each factor, normalize to [-1, 1], map to BUY/HOLD/SELL with configurable thresholds.
 
-### 2.2 [P1] Risk & performance statistics
+### 2.2 [P1] Risk & performance statistics ✅ implemented
 Per symbol on `/analysis/:symbol`:
 - **Annualized return & volatility** (from daily log returns).
 - **Sharpe ratio** (uses FRED risk-free rate from §1.3).
@@ -133,7 +152,7 @@ Per symbol on `/analysis/:symbol`:
 - **Value-at-Risk (VaR)** — 95% 1-day parametric and historical.
 - **Correlation matrix** across region — new `/correlations` page.
 
-### 2.3 [P1] Black-Scholes options pricing
+### 2.3 [P1] Black-Scholes options pricing ✅ implemented
 - **Inputs**: spot (from quote), strike, expiry (T in years), risk-free rate (FRED), volatility (see below), option type.
 - **Outputs**: theoretical call/put price, **Greeks** (Δ, Γ, Θ, Vega, Rho).
 - **Volatility input**: offer toggle between (a) historical 30-day realized vol, (b) implied vol from Polygon chain (§1.2).

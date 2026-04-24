@@ -234,6 +234,34 @@ class MarketDataService
         return results if results.values.any?
       end
 
+      # FMP free-tier historical: one call returns ~5y of daily EOD closes.
+      # Shape: [{ symbol, date: 'YYYY-MM-DD', price, volume }] (newest first).
+      if ENV['FMP_API_KEY'] && !ENV['FMP_API_KEY'].empty?
+        fmp_points = fetch_fmp_historical_full(symbol)
+        if fmp_points && !fmp_points.empty?
+          today = Date.today
+          cutoffs = {
+            '1d'  => today - 1,
+            '1m'  => today - 30,
+            '3m'  => today - 90,
+            'ytd' => Date.new(today.year, 1, 1),
+            '1y'  => today - 365,
+            '5y'  => today - (5 * 365)
+          }
+          results = {}
+          cutoffs.each do |period, cutoff|
+            points = fmp_points.select { |p| Date.parse(p[:date]) >= cutoff }
+            if points.any?
+              store_cache("candle:#{symbol}:#{period}", points)
+              results[period] = points
+            else
+              results[period] = nil
+            end
+          end
+          return results if results.values.any?
+        end
+      end
+
       # Tiingo: one call for 5y of daily EOD data, slice into all periods locally
       if ENV['TIINGO_API_KEY'] && (!@tiingo_hist_rate_limited_until || Time.now >= @tiingo_hist_rate_limited_until)
         api_key    = ENV['TIINGO_API_KEY']
@@ -626,9 +654,11 @@ class MarketDataService
       end
 
       range_cfg = YAHOO_RANGE_MAP[period] || YAHOO_RANGE_MAP['1y']
-      # Yahoo primary; Finnhub secondary; Tiingo tertiary; Alpha Vantage fallback
+      # Yahoo primary (has intraday for 1d); FMP is the most reliable free-tier
+      # daily source for US-listed symbols; then Finnhub, Tiingo, Alpha Vantage.
       result = fetch_historical_from_yahoo(symbol, range_cfg) ||
-           fetch_historical_from_finnhub(symbol, period) ||
+               fetch_historical_from_fmp(symbol, period) ||
+               fetch_historical_from_finnhub(symbol, period) ||
                fetch_historical_from_tiingo(symbol, period) ||
                fetch_historical_from_alpha_vantage(symbol, period)
 
@@ -829,6 +859,59 @@ class MarketDataService
       points.empty? ? nil : points
     rescue StandardError => e
       warn "[MarketDataService] Finnhub historical fetch failed for #{symbol}: #{e.message}" unless test_env?
+      nil
+    end
+
+    # FMP free-tier historical. Returns [{date:, close:}] sorted oldest→newest
+    # for the requested period window, or nil if the API declines.
+    # Uses /historical-price-eod/light (compact: date + price only).
+    def fetch_historical_from_fmp(symbol, period)
+      all_points = fetch_fmp_historical_full(symbol)
+      return nil if all_points.nil? || all_points.empty?
+
+      today = Date.today
+      cutoff = case period
+               when '1d'  then today - 1
+               when '1m'  then today - 30
+               when '3m'  then today - 90
+               when 'ytd' then Date.new(today.year, 1, 1)
+               when '1y'  then today - 365
+               when '5y'  then today - (5 * 365)
+               else            today - 365
+               end
+
+      points = all_points.select { |p| Date.parse(p[:date]) >= cutoff }
+      points.empty? ? nil : points
+    rescue StandardError => e
+      warn "[MarketDataService] FMP historical fetch failed for #{symbol}: #{e.message}" unless test_env?
+      nil
+    end
+
+    # Shared FMP fetch: returns the full 5y series as [{date:, close:}] sorted
+    # oldest→newest. Callers slice by period. Returns nil on any error.
+    def fetch_fmp_historical_full(symbol)
+      api_key = ENV['FMP_API_KEY']
+      return nil unless api_key && !api_key.empty?
+
+      url = URI("https://financialmodelingprep.com/stable/historical-price-eod/light" \
+                "?symbol=#{symbol}&apikey=#{api_key}")
+      res = Net::HTTP.get_response(url)
+      unless res.is_a?(Net::HTTPSuccess)
+        warn "[MarketDataService] FMP historical returned HTTP #{res.code} for #{symbol}" unless test_env?
+        return nil
+      end
+
+      data = JSON.parse(res.body)
+      return nil unless data.is_a?(Array) && !data.empty?
+
+      data.filter_map do |row|
+        date  = row['date']
+        close = row['price'] || row['close']
+        next unless date && close
+        { date: date.slice(0, 10), close: close.to_f.round(2) }
+      end.sort_by { |p| p[:date] }
+    rescue StandardError => e
+      warn "[MarketDataService] FMP historical fetch failed for #{symbol}: #{e.message}" unless test_env?
       nil
     end
 
