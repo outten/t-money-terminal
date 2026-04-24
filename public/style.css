@@ -307,29 +307,39 @@ body.dark .refresh-btn:hover { background: #48484a; }
 .period-btn:hover { background: #e5e5ea; }
 .period-btn.active { background: #0071e3; color: #fff; border-color: #0071e3; }
 
-/* Macro snapshot panel (dashboard) */
-.macro-panel {
-  background: #fff;
-  border-radius: 14px;
-  padding: 1.25rem 1.5rem;
-  margin-bottom: 1.25rem;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+/* Data tables (macro snapshot, international indices, etc.)
+   Builds on .summary-table and refines it for the Apple-inspired aesthetic:
+   hairline dividers, tabular numerals, right-aligned numeric columns. */
+.data-table {
+  box-shadow: none;
+  margin-bottom: 0;
+  border-radius: 0;
+  background: transparent;
 }
-.macro-panel h3 { margin: 0 0 0.75rem 0; font-size: 1rem; color: #1d1d1f; }
-.macro-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 0.75rem 1rem;
+.data-table thead th {
+  background: transparent;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8e8e93;
+  font-weight: 500;
+  border-bottom: 1px solid #e5e5ea;
+  padding: 0.6rem 1rem;
 }
-.macro-card {
-  display: flex;
-  flex-direction: column;
-  padding: 0.6rem 0.75rem;
-  background: #f5f5f7;
-  border-radius: 8px;
+.data-table tbody td {
+  padding: 0.7rem 1rem;
+  border-top: 1px solid #f2f2f7;
+  font-size: 0.95rem;
+  color: #1d1d1f;
 }
-.macro-card .field-value { font-size: 1.1rem; font-weight: 600; color: #1d1d1f; margin-top: 0.15rem; }
-.macro-date { font-size: 0.7rem; color: #8e8e93; margin-top: 0.2rem; }
+.data-table tbody tr:first-child td { border-top: none; }
+.data-table .num { text-align: right; }
+.data-table .mono {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.005em;
+}
+.data-table .muted { color: #8e8e93; font-size: 0.88rem; }
+.analysis-section > .data-table { margin-left: -0.5rem; margin-right: -0.5rem; width: calc(100% + 1rem); }
 
 /* News panel (analysis page) */
 .news-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 1rem; }
@@ -378,10 +388,9 @@ body.dark .type-candle  { background: #003318; color: #44cc77; }
 body.dark .type-analyst { background: #330000; color: #ff8080; }
 body.dark .type-profile { background: #001133; color: #6699ff; }
 body.dark .type-quote   { background: #2c2c2e; color: #aeaeb2; }
-body.dark .macro-panel { background: #2c2c2e; box-shadow: none; }
-body.dark .macro-panel h3 { color: #f5f5f7; }
-body.dark .macro-card { background: #1c1c1e; }
-body.dark .macro-card .field-value { color: #f5f5f7; }
+body.dark .data-table thead th { border-bottom-color: #3a3a3c; }
+body.dark .data-table tbody td { border-top-color: #3a3a3c; color: #f5f5f7; }
+body.dark .data-table .muted   { color: #8e8e93; }
 body.dark .news-item { border-bottom-color: #3a3a3c; }
 body.dark .news-headline { color: #0a84ff; }
 body.dark .news-summary { color: #aeaeb2; }
