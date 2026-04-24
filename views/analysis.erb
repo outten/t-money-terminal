@@ -222,6 +222,185 @@
 </section>
 <% end %>
 
+<!-- Technical Indicators (Analytics::Indicators) -->
+<% if @analytics[:indicators] && @analytics[:indicators][:latest_close] %>
+<% ind = @analytics[:indicators] %>
+<section class="analysis-section">
+  <h3>Technical Indicators</h3>
+  <table class="summary-table data-table">
+    <thead>
+      <tr>
+        <th>Indicator</th>
+        <th class="num">Value</th>
+        <th>Signal</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Price vs SMA 50</td>
+        <td class="num mono"><%= ind[:sma50] ? format('%.2f', ind[:sma50]) : '—' %></td>
+        <td class="<%= ind[:sma50] && ind[:latest_close] >= ind[:sma50] ? 'positive' : 'negative' %>">
+          <% if ind[:sma50] %>
+            <%= ind[:latest_close] >= ind[:sma50] ? 'Price above SMA 50' : 'Price below SMA 50' %>
+          <% else %>—<% end %>
+        </td>
+      </tr>
+      <tr>
+        <td>Price vs SMA 200</td>
+        <td class="num mono"><%= ind[:sma200] ? format('%.2f', ind[:sma200]) : '—' %></td>
+        <td class="<%= ind[:sma200] && ind[:latest_close] >= ind[:sma200] ? 'positive' : 'negative' %>">
+          <% if ind[:sma200] %>
+            <%= ind[:latest_close] >= ind[:sma200] ? 'Price above SMA 200' : 'Price below SMA 200' %>
+          <% else %>Insufficient history<% end %>
+        </td>
+      </tr>
+      <tr>
+        <td>RSI (14)</td>
+        <td class="num mono"><%= ind[:rsi14] ? format('%.1f', ind[:rsi14]) : '—' %></td>
+        <td class="<%= ind[:rsi14] && ind[:rsi14] > 70 ? 'negative' : ind[:rsi14] && ind[:rsi14] < 30 ? 'positive' : '' %>">
+          <%= rsi_label(ind[:rsi14]) %>
+        </td>
+      </tr>
+      <tr>
+        <td>MACD (12 / 26 / 9)</td>
+        <td class="num mono">
+          <%= ind[:macd] ? format('%.2f', ind[:macd]) : '—' %>
+          / <%= ind[:macd_signal] ? format('%.2f', ind[:macd_signal]) : '—' %>
+        </td>
+        <td class="<%= ind[:macd_histogram] && ind[:macd_histogram] >= 0 ? 'positive' : 'negative' %>">
+          <% if ind[:macd_histogram] %>
+            <%= ind[:macd_histogram] >= 0 ? 'Bullish crossover' : 'Bearish crossover' %>
+            (hist <%= format('%+.2f', ind[:macd_histogram]) %>)
+          <% else %>—<% end %>
+        </td>
+      </tr>
+      <tr>
+        <td>Bollinger (20, 2σ)</td>
+        <td class="num mono">
+          <% if ind[:bb_upper] %>
+            <%= format('%.2f', ind[:bb_lower]) %> — <%= format('%.2f', ind[:bb_upper]) %>
+          <% else %>—<% end %>
+        </td>
+        <td><%= bollinger_position(ind[:latest_close], ind[:bb_upper], ind[:bb_middle], ind[:bb_lower]) %></td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="data-source">Computed locally from cached historical closes.</p>
+</section>
+<% end %>
+
+<!-- Risk & Performance (Analytics::Risk) -->
+<% if @analytics[:risk] && @analytics[:risk][:annualized_return] %>
+<% rk = @analytics[:risk] %>
+<section class="analysis-section">
+  <h3>Risk & Performance</h3>
+  <table class="summary-table data-table">
+    <thead>
+      <tr>
+        <th>Metric</th>
+        <th class="num">Value</th>
+        <th>Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Annualized Return</td>
+        <td class="num mono <%= rk[:annualized_return] && rk[:annualized_return] >= 0 ? 'positive' : 'negative' %>">
+          <%= format_percent(rk[:annualized_return]) %>
+        </td>
+        <td class="muted">CAGR over window</td>
+      </tr>
+      <tr>
+        <td>Annualized Volatility</td>
+        <td class="num mono"><%= format_percent(rk[:annualized_volatility]) %></td>
+        <td class="muted">σ of daily returns × √252</td>
+      </tr>
+      <tr>
+        <td>Sharpe Ratio</td>
+        <td class="num mono <%= rk[:sharpe] && rk[:sharpe] >= 1 ? 'positive' : rk[:sharpe] && rk[:sharpe] < 0 ? 'negative' : '' %>">
+          <%= format_ratio(rk[:sharpe]) %>
+        </td>
+        <td class="muted">rf = <%= format_percent(rk[:risk_free_rate]) %> (FRED 3-Mo)</td>
+      </tr>
+      <tr>
+        <td>Sortino Ratio</td>
+        <td class="num mono"><%= format_ratio(rk[:sortino]) %></td>
+        <td class="muted">Downside deviation only</td>
+      </tr>
+      <tr>
+        <td>Max Drawdown</td>
+        <td class="num mono negative"><%= format_percent(rk[:max_drawdown]) %></td>
+        <td class="muted">Peak-to-trough loss</td>
+      </tr>
+      <tr>
+        <td>VaR 95% (historical)</td>
+        <td class="num mono negative"><%= format_percent(rk[:var_historical_95]) %></td>
+        <td class="muted">5th-%ile daily return</td>
+      </tr>
+      <tr>
+        <td>VaR 95% (parametric)</td>
+        <td class="num mono negative"><%= format_percent(rk[:var_parametric_95]) %></td>
+        <td class="muted">Normal-dist approximation</td>
+      </tr>
+      <% if rk[:beta_vs_spy] %>
+      <tr>
+        <td>Beta vs SPY</td>
+        <td class="num mono"><%= format_ratio(rk[:beta_vs_spy]) %></td>
+        <td class="muted">Sensitivity to market</td>
+      </tr>
+      <% end %>
+    </tbody>
+  </table>
+  <p class="data-source">Computed locally from cached historical closes and FRED risk-free rate.</p>
+</section>
+<% end %>
+
+<!-- Black-Scholes Illustration (Analytics::BlackScholes) -->
+<% if @analytics[:bs] && !@analytics[:bs].empty? %>
+<% bs = @analytics[:bs] %>
+<section class="analysis-section">
+  <h3>Black-Scholes (ATM, 30-day)</h3>
+  <div class="profile-grid">
+    <div class="profile-fields">
+      <div class="profile-field"><span class="field-label">Strike (ATM)</span><span class="field-value">$<%= format('%.2f', bs[:strike]) %></span></div>
+      <div class="profile-field"><span class="field-label">Expiry</span><span class="field-value"><%= bs[:expiry_days] %> days</span></div>
+      <div class="profile-field"><span class="field-label">Historical σ</span><span class="field-value"><%= format_percent(bs[:historical_vol]) %></span></div>
+      <div class="profile-field"><span class="field-label">Risk-Free Rate</span><span class="field-value"><%= format_percent(bs[:risk_free_rate]) %></span></div>
+    </div>
+  </div>
+  <table class="summary-table data-table" style="margin-top: 0.75rem;">
+    <thead>
+      <tr>
+        <th>Option</th>
+        <th class="num">Price</th>
+        <th class="num">Δ</th>
+        <th class="num">Γ</th>
+        <th class="num">Vega</th>
+        <th class="num">Θ / day</th>
+        <th class="num">ρ</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Call (ATM)</td>
+        <td class="num mono">$<%= format('%.2f', bs[:call_price]) %></td>
+        <td class="num mono"><%= format('%.3f', bs[:greeks][:delta]) %></td>
+        <td class="num mono"><%= format('%.4f', bs[:greeks][:gamma]) %></td>
+        <td class="num mono"><%= format('%.3f', bs[:greeks][:vega]) %></td>
+        <td class="num mono negative"><%= format('%.3f', bs[:greeks][:theta]) %></td>
+        <td class="num mono"><%= format('%.3f', bs[:greeks][:rho]) %></td>
+      </tr>
+      <tr>
+        <td>Put (ATM)</td>
+        <td class="num mono">$<%= format('%.2f', bs[:put_price]) %></td>
+        <td colspan="5" class="muted">Put-call parity implied</td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="data-source">European option model; σ from 1-year realised vol, r from FRED 3-Mo Treasury.</p>
+</section>
+<% end %>
+
 <!-- External Links -->
 <section class="analysis-section">
   <h3>External Research</h3>

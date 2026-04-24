@@ -4,6 +4,7 @@ Dotenv.load(File.expand_path('../../.credentials', __FILE__))
 require_relative 'market_data_service'
 require_relative 'recommendation_service'
 require_relative 'providers'
+require_relative 'analytics'
 
 class TMoneyTerminal < Sinatra::Base
   set :views, File.expand_path('../../views', __FILE__)
@@ -119,6 +120,9 @@ class TMoneyTerminal < Sinatra::Base
       @earnings     = safe_fetch { Providers::FmpService.next_earnings(symbol) }
     end
 
+    # Analytics (pure Ruby, zero API calls) — use cached historicals.
+    @analytics = safe_fetch { compute_analytics(symbol, @historical) } || {}
+
     # Determine if any data is stale (served from persistent fallback cache)
     stale_keys  = [symbol, "analyst:#{symbol}", "profile:#{symbol}", "candle:#{symbol}:1y"]
     stale_infos = stale_keys.map { |k| MarketDataService.cache_info_for(k) }.select { |i| i[:is_stale] }
@@ -195,6 +199,112 @@ class TMoneyTerminal < Sinatra::Base
     def format_percent(value, digits: 2)
       value.nil? ? '—' : "#{format("%.#{digits}f", value.to_f * 100)}%"
     end
+
+    # Classify the current price's position within its Bollinger Bands.
+    def bollinger_position(price, upper, middle, lower)
+      return '—' if [price, upper, middle, lower].any?(&:nil?)
+      return 'Above upper band' if price > upper
+      return 'Below lower band' if price < lower
+      price > middle ? 'Upper half' : 'Lower half'
+    end
+
+    # Short text label for an RSI reading.
+    def rsi_label(rsi)
+      return '—' if rsi.nil?
+      return 'Overbought' if rsi > 70
+      return 'Oversold'   if rsi < 30
+      'Neutral'
+    end
+  end
+
+  # --- Analytics orchestration --------------------------------------------
+
+  # Compute the full analytics bundle for a symbol from a cached historical
+  # series (expected shape: [{date:, close:}]). All three sub-modules are
+  # pure-Ruby, so this adds no API calls and is safe to call per request.
+  def compute_analytics(symbol, historical)
+    return {} unless historical.is_a?(Array) && historical.length >= 2
+
+    closes = historical.map { |p| (p[:close] || p['close']).to_f }
+    latest_close = closes.last
+
+    # --- Technical indicators --------------------------------------------
+    sma50   = Analytics::Indicators.latest(Analytics::Indicators.sma(closes, 50))
+    sma200  = Analytics::Indicators.latest(Analytics::Indicators.sma(closes, 200))
+    rsi14   = Analytics::Indicators.latest(Analytics::Indicators.rsi(closes, period: 14))
+    macd    = Analytics::Indicators.macd(closes)
+    macd_l  = Analytics::Indicators.latest(macd[:macd])
+    macd_s  = Analytics::Indicators.latest(macd[:signal])
+    macd_h  = Analytics::Indicators.latest(macd[:histogram])
+    bb      = Analytics::Indicators.bollinger(closes, period: 20, stddev: 2)
+    bb_up   = Analytics::Indicators.latest(bb[:upper])
+    bb_md   = Analytics::Indicators.latest(bb[:middle])
+    bb_lo   = Analytics::Indicators.latest(bb[:lower])
+
+    indicators = {
+      latest_close: latest_close,
+      sma50:   sma50,
+      sma200:  sma200,
+      rsi14:   rsi14,
+      macd:    macd_l,
+      macd_signal:    macd_s,
+      macd_histogram: macd_h,
+      bb_upper:  bb_up,
+      bb_middle: bb_md,
+      bb_lower:  bb_lo
+    }
+
+    # --- Risk & performance ----------------------------------------------
+    rf = safe_fetch { Providers::FredService.risk_free_rate(term: :treasury_3mo) } || 0.0
+
+    risk = {
+      annualized_return:     Analytics::Risk.annualized_return(closes),
+      annualized_volatility: Analytics::Risk.annualized_volatility(closes),
+      sharpe:                Analytics::Risk.sharpe(closes, risk_free_rate: rf),
+      sortino:               Analytics::Risk.sortino(closes, risk_free_rate: rf),
+      max_drawdown:          Analytics::Risk.max_drawdown(closes),
+      var_historical_95:     Analytics::Risk.var_historical(closes, confidence: 0.95),
+      var_parametric_95:     Analytics::Risk.var_parametric(closes, confidence: 0.95),
+      risk_free_rate:        rf,
+      beta_vs_spy:           compute_beta_vs_spy(symbol, historical)
+    }
+
+    # --- Black-Scholes illustration (ATM, 30 days, realised vol) ---------
+    hist_vol = Analytics::BlackScholes.historical_volatility(closes) || 0.0
+    t_years  = 30.0 / 365.0
+    bs = {}
+    if latest_close && latest_close > 0 && hist_vol > 0
+      call_px = Analytics::BlackScholes.price(:call, s: latest_close, k: latest_close,
+                                              t: t_years, r: rf, sigma: hist_vol)
+      put_px  = Analytics::BlackScholes.price(:put,  s: latest_close, k: latest_close,
+                                              t: t_years, r: rf, sigma: hist_vol)
+      greeks_call = Analytics::BlackScholes.greeks(:call, s: latest_close, k: latest_close,
+                                                   t: t_years, r: rf, sigma: hist_vol)
+      bs = {
+        strike:           latest_close,
+        expiry_days:      30,
+        historical_vol:   hist_vol,
+        risk_free_rate:   rf,
+        call_price:       call_px,
+        put_price:        put_px,
+        greeks:           greeks_call
+      }
+    end
+
+    { indicators: indicators, risk: risk, bs: bs }
+  end
+
+  # Returns the beta of `symbol` vs SPY, or nil if SPY is the symbol itself
+  # or historical data is unavailable / too short.
+  def compute_beta_vs_spy(symbol, historical)
+    return nil if symbol == 'SPY'
+
+    spy = safe_fetch { MarketDataService.historical('SPY', '1y') }
+    return nil if spy.nil? || spy.empty?
+
+    asset_closes, bench_closes = Analytics::Risk.align_on_dates(historical, spy)
+    return nil if asset_closes.length < 2
+    Analytics::Risk.beta(asset_closes, bench_closes)
   end
 end
 
