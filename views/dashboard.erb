@@ -9,44 +9,86 @@
 </div>
 
 <% if @macro && @macro.values.any? %>
-<section class="macro-panel">
+<section class="analysis-section">
   <h3>Macro Snapshot</h3>
-  <div class="macro-grid">
-    <% macro_cards = [
-      [:fed_funds,     'Fed Funds',     '%'],
-      [:treasury_3mo,  '3-Mo Treasury', '%'],
-      [:treasury_10yr, '10-Yr Treasury','%'],
-      [:cpi,           'CPI (Index)',   nil],
-      [:unemployment,  'Unemployment',  '%'],
-      [:vix,           'VIX',           nil]
-    ] %>
-    <% macro_cards.each do |key, label, unit| %>
-      <% row = @macro[key] %>
-      <% next unless row %>
-      <div class="macro-card">
-        <span class="field-label"><%= label %></span>
-        <span class="field-value"><%= row[:value] %><%= unit %></span>
-        <span class="macro-date"><%= row[:date] %></span>
-      </div>
-    <% end %>
-  </div>
+  <table class="summary-table data-table">
+    <thead>
+      <tr>
+        <th>Series</th>
+        <th class="num">Value</th>
+        <th>As of</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% macro_cards = [
+        [:fed_funds,     'Fed Funds Rate',       '%'],
+        [:treasury_3mo,  '3-Month Treasury',     '%'],
+        [:treasury_10yr, '10-Year Treasury',     '%'],
+        [:cpi,           'CPI (Index Level)',    nil],
+        [:unemployment,  'Unemployment Rate',    '%'],
+        [:vix,           'VIX',                  nil]
+      ] %>
+      <% macro_cards.each do |key, label, unit| %>
+        <% row = @macro[key] %>
+        <% next unless row %>
+        <tr>
+          <td><%= label %></td>
+          <td class="num mono"><%= row[:value] %><%= unit %></td>
+          <td class="muted mono"><%= row[:date] %></td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
   <p class="data-source">Source: FRED (St. Louis Fed)</p>
 </section>
 <% end %>
 
-<% if @intl_indices && !@intl_indices.empty? %>
-<section class="macro-panel">
-  <h3>International Indices</h3>
-  <div class="macro-grid">
-    <% index_labels = { nikkei: 'Nikkei 225', dax: 'DAX', ftse: 'FTSE 100', cac: 'CAC 40', hang_seng: 'Hang Seng' } %>
-    <% @intl_indices.each do |key, row| %>
-      <div class="macro-card">
-        <span class="field-label"><%= index_labels[key] || key.to_s %></span>
-        <span class="field-value"><%= row[:close] ? format('%.2f', row[:close]) : '—' %></span>
-        <span class="macro-date"><%= row[:date] %></span>
-      </div>
-    <% end %>
-  </div>
+<% if @indices && !@indices.empty? %>
+<section class="analysis-section">
+  <h3>Indices</h3>
+  <table class="summary-table data-table">
+    <thead>
+      <tr>
+        <th>Index</th>
+        <th>Region</th>
+        <th class="num">Close</th>
+        <th class="num">Change</th>
+        <th class="num">Open</th>
+        <th class="num">High</th>
+        <th class="num">Low</th>
+        <th>As of</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% index_meta = {
+        sp500:     ['S&P 500',    'US'],
+        nasdaq:    ['Nasdaq Composite', 'US'],
+        dow:       ['Dow Jones Industrial Avg.', 'US'],
+        nikkei:    ['Nikkei 225', 'Japan'],
+        hang_seng: ['Hang Seng',  'Hong Kong'],
+        dax:       ['DAX',        'Germany'],
+        ftse:      ['FTSE 100',   'UK'],
+        cac:       ['CAC 40',     'France']
+      } %>
+      <% @indices.each do |key, row| %>
+        <% next unless row %>
+        <% label, region = index_meta[key] || [key.to_s, '—'] %>
+        <% chg = (row[:open] && row[:close] && row[:open] != 0) ? ((row[:close] - row[:open]) / row[:open] * 100) : nil %>
+        <tr>
+          <td><%= label %></td>
+          <td class="muted"><%= region %></td>
+          <td class="num mono"><%= row[:close] ? format('%.2f', row[:close]) : '—' %></td>
+          <td class="num mono <%= chg && chg >= 0 ? 'positive' : chg ? 'negative' : '' %>">
+            <%= chg ? format('%+.2f%%', chg) : '—' %>
+          </td>
+          <td class="num mono muted"><%= row[:open] ? format('%.2f', row[:open]) : '—' %></td>
+          <td class="num mono muted"><%= row[:high] ? format('%.2f', row[:high]) : '—' %></td>
+          <td class="num mono muted"><%= row[:low]  ? format('%.2f', row[:low])  : '—' %></td>
+          <td class="muted mono"><%= row[:date] %></td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
   <p class="data-source">Source: Stooq</p>
 </section>
 <% end %>

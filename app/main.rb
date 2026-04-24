@@ -22,8 +22,8 @@ class TMoneyTerminal < Sinatra::Base
     @data    = MarketDataService.summary
     @signals = RecommendationService.signals
     @macro   = safe_fetch { Providers::FredService.macro_snapshot } || {}
-    @intl_indices = safe_fetch do
-      %i[nikkei dax ftse cac hang_seng].each_with_object({}) do |key, acc|
+    @indices = safe_fetch do
+      %i[sp500 nasdaq dow nikkei hang_seng dax ftse cac].each_with_object({}) do |key, acc|
         row = Providers::StooqService.index(key)
         acc[key] = row if row
       end

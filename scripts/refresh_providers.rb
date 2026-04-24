@@ -81,7 +81,7 @@ if target_symbols.empty?
 end
 
 equity_symbols = target_symbols - etf_symbols
-stooq_indices  = %i[nikkei dax ftse cac hang_seng]
+stooq_indices  = %i[sp500 nasdaq dow nikkei hang_seng dax ftse cac]
 
 # ── Preamble ─────────────────────────────────────────────────────────────────
 
