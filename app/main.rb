@@ -14,6 +14,7 @@ require_relative 'watchlist_store'
 require_relative 'alerts_store'
 require_relative 'portfolio_store'
 require_relative 'health_registry'
+require_relative 'correlation_store'
 
 class TMoneyTerminal < Sinatra::Base
   set :views, File.expand_path('../../views', __FILE__)
@@ -49,6 +50,11 @@ class TMoneyTerminal < Sinatra::Base
     # Upcoming earnings (next 7 days) — cross-reference the FMP calendar
     # against every symbol the app knows about (REGIONS + curated + watchlist).
     @upcoming_earnings = safe_fetch { upcoming_earnings_for_universe } || []
+
+    # Provider degradation: surface a banner when any upstream is failing
+    # majority of recent calls. Hidden until at least 5 observations exist
+    # so the banner doesn't fire on cold start.
+    @degraded_providers = HealthRegistry.degraded
 
     erb :dashboard
   end
@@ -93,16 +99,19 @@ class TMoneyTerminal < Sinatra::Base
   post '/refresh/analysis/:symbol' do
     # Refresh single symbol
     symbol = params['symbol'].upcase
-    halt 404, 'Symbol not found' unless VALID_SYMBOLS.include?(symbol)
-    
+    halt 404, 'Symbol not found' unless SymbolIndex.known?(symbol)
+
     MarketDataService.bust_cache_for_symbol!(symbol)
     redirect "/analysis/#{symbol}", 302
   end
 
-  # Legacy accessor — retained for any external caller. The full whitelist now
-  # lives in SymbolIndex (REGIONS ∪ curated list) so the search box can route
-  # to any covered ticker without a pre-registered hardcoded entry.
-  VALID_SYMBOLS      = SymbolIndex.symbols
+  # Legacy module wrapper — kept so external callers (and existing tests) that
+  # reference `TMoneyTerminal::VALID_SYMBOLS.include?(sym)` keep working. Now
+  # delegates to `SymbolIndex.known?` so runtime-discovered tickers are honored.
+  VALID_SYMBOLS = Module.new do
+    def self.include?(symbol); SymbolIndex.known?(symbol); end
+    def self.to_a;             SymbolIndex.symbols;        end
+  end
   VALID_REGION_NAMES = MarketDataService::REGIONS.keys.map(&:to_s).freeze
 
   get '/region/:name' do
@@ -115,7 +124,7 @@ class TMoneyTerminal < Sinatra::Base
 
   get '/analysis/:symbol' do
     symbol = params['symbol'].upcase
-    halt 404, 'Symbol not found' unless VALID_SYMBOLS.include?(symbol)
+    halt 404, 'Symbol not found' unless SymbolIndex.known?(symbol)
 
     # ?refresh=1 clears live cache entries for this symbol and redirects clean.
     # Persistent fallback is preserved so historical charts don't go blank under provider throttling.
@@ -166,7 +175,7 @@ class TMoneyTerminal < Sinatra::Base
 
   get '/api/candle/:symbol/:period' do
     symbol = params['symbol'].upcase
-    halt 404, { error: 'Symbol not found' }.to_json unless VALID_SYMBOLS.include?(symbol)
+    halt 404, { error: 'Symbol not found' }.to_json unless SymbolIndex.known?(symbol)
 
     valid_periods = %w[1d 1m 3m ytd 1y 5y]
     period = params['period']
@@ -220,7 +229,43 @@ class TMoneyTerminal < Sinatra::Base
     q     = params['q'].to_s.strip
     limit = (params['limit'] || 10).to_i.clamp(1, 50)
     results = q.empty? ? SymbolIndex.to_a : SymbolIndex.search(q, limit: limit)
-    { results: results, total: SymbolIndex.to_a.length }.to_json
+
+    # If the query looks like a ticker but matched nothing in the index, hint
+    # to the client that it can try discovery (POST /api/symbols/discover).
+    can_discover = !q.empty? && results.empty? && SymbolIndex.looks_like_ticker?(q)
+
+    { results: results, total: SymbolIndex.to_a.length, can_discover: can_discover, query: q.upcase }.to_json
+  end
+
+  # Attempt to bring an unknown ticker into the index. Hits the live quote
+  # waterfall once; if a real price comes back we persist the symbol to
+  # data/symbols_extended.json so subsequent searches and /analysis/:symbol
+  # resolve. Failures (unknown ticker, all providers down) return 404 so the
+  # client can show a "couldn't find that ticker" message.
+  post '/api/symbols/discover' do
+    content_type :json
+    body   = request_json
+    symbol = (body['symbol'] || params['symbol']).to_s.strip.upcase
+
+    halt 400, { error: 'symbol required' }.to_json if symbol.empty?
+    halt 400, { error: "'#{symbol}' doesn't look like a ticker" }.to_json unless SymbolIndex.looks_like_ticker?(symbol)
+
+    # Already known? Treat as a no-op success — UI can route straight to /analysis.
+    if SymbolIndex.known?(symbol)
+      return { symbol: symbol, name: symbol, region: 'Other', already_known: true }.to_json
+    end
+
+    quote = safe_fetch { MarketDataService.quote(symbol) } || {}
+    price = (quote['05. price'] || quote[:price]).to_f
+    halt 404, { error: "no quote available for '#{symbol}'" }.to_json if price <= 0
+
+    # Best-effort name lookup. Don't fail discovery if profile is unavailable.
+    profile = safe_fetch { MarketDataService.company_profile(symbol) } || {}
+    name    = profile[:name].to_s.empty? ? symbol : profile[:name]
+    region  = profile[:exchange].to_s.empty? ? 'Other' : profile[:exchange]
+
+    entry = SymbolIndex.add_extension(symbol, name: name, region: region, source: 'discovery')
+    entry.to_json
   end
 
   # -------------------------------------------------------------------------
@@ -419,6 +464,30 @@ class TMoneyTerminal < Sinatra::Base
     { period: period, series: series }.to_json
   end
 
+  # -------------------------------------------------------------------------
+  # Correlation heatmap
+  # -------------------------------------------------------------------------
+
+  CORRELATION_VALID_PERIODS = %w[1m 3m ytd 1y 5y].freeze
+  CORRELATION_MAX_SYMBOLS   = 12
+
+  get '/correlations' do
+    requested = parse_correlation_symbols(params['symbols'])
+    @symbols  = requested.first(CORRELATION_MAX_SYMBOLS)
+    @period   = CORRELATION_VALID_PERIODS.include?(params['period']) ? params['period'] : '1y'
+    @payload  = @symbols.length >= 2 ? CorrelationStore.matrix_for(@symbols, period: @period) : nil
+    erb :correlations
+  end
+
+  get '/api/correlations' do
+    content_type :json
+    symbols = parse_correlation_symbols(params['symbols'])
+    halt 400, { error: "supply 2..#{CORRELATION_MAX_SYMBOLS} symbols" }.to_json if symbols.length < 2
+    halt 400, { error: "max #{CORRELATION_MAX_SYMBOLS} symbols" }.to_json if symbols.length > CORRELATION_MAX_SYMBOLS
+    period = CORRELATION_VALID_PERIODS.include?(params['period']) ? params['period'] : '1y'
+    CorrelationStore.matrix_for(symbols, period: period).to_json
+  end
+
   helpers do
     # Cache-busting asset mtime used in layout.erb for /style.css and /app.js.
     def asset_mtime(relative_path)
@@ -475,6 +544,35 @@ class TMoneyTerminal < Sinatra::Base
       return 'Overbought' if rsi > 70
       return 'Oversold'   if rsi < 30
       'Neutral'
+    end
+
+    # Diverging red(-1) → white(0) → green(+1) colormap for the correlation
+    # heatmap cells. Pure CSS rgb() so the page remains print/screenshot clean.
+    def correlation_color(v)
+      return '#f2f2f7' if v.nil? # neutral grey for missing
+      t = [-1.0, [1.0, v.to_f].min].max
+      intensity = t.abs
+      if t >= 0
+        r = (255 + (52  - 255) * intensity).round
+        g = (255 + (199 - 255) * intensity).round
+        b = (255 + (89  - 255) * intensity).round
+      else
+        r = 255 # 255 + (255 - 255) * intensity
+        g = (255 + (59  - 255) * intensity).round
+        b = (255 + (48  - 255) * intensity).round
+      end
+      "rgb(#{r}, #{g}, #{b})"
+    end
+
+    # Pick a contrasting text color so labels are readable against `bg_color`.
+    # Uses the YIQ luminance heuristic. Inputs are the 'rgb(r, g, b)' strings
+    # produced by `correlation_color`.
+    def correlation_text_color(bg_color)
+      m = bg_color.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)
+      return '#1d1d1f' unless m
+      r, g, b = m[1].to_i, m[2].to_i, m[3].to_i
+      yiq = (r * 299 + g * 587 + b * 114) / 1000.0
+      yiq >= 160 ? '#1d1d1f' : '#ffffff'
     end
   end
 
@@ -604,6 +702,15 @@ class TMoneyTerminal < Sinatra::Base
       request.body.rewind
       body.empty? ? {} : (JSON.parse(body) rescue {})
     end
+  end
+
+  # Comma-split, uppercase, dedupe, drop unknowns. Shared by `/correlations`
+  # and `/api/correlations`. Empty input yields [].
+  def parse_correlation_symbols(raw)
+    (raw || '').split(',').map { |s| s.strip.upcase }
+                .reject(&:empty?)
+                .uniq
+                .select { |s| SymbolIndex.known?(s) }
   end
 
   # Rebase a bars array ([{date:, close:}, ...]) to 100 on the first close.

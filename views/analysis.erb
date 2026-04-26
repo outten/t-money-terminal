@@ -20,8 +20,10 @@
             data-symbol="<%= @symbol %>" data-state="off" title="Add / remove from watchlist">
       ☆ Add to Watchlist
     </button>
-    <a href="/api/export/<%= @symbol %>/1y.csv" class="export-btn" title="Download 1-year OHLCV + indicators CSV">
-      ⬇ Export CSV
+    <a id="export-csv-btn" href="/api/export/<%= @symbol %>/1y.csv" class="export-btn"
+       data-symbol="<%= @symbol %>" data-period="1y"
+       title="Download OHLCV + indicators CSV for the chart's current period">
+      ⬇ Export CSV (<span class="export-csv-period">1Y</span>)
     </a>
     <form method="POST" action="/refresh/analysis/<%= @symbol %>" style="display: inline;">
       <button type="submit" class="refresh-btn" title="Bust cache and reload live data">
@@ -538,12 +540,24 @@
       })
       .catch(function() { /* keep initial paint (or empty state) on failure */ });
 
+    // Keeps the "Export CSV" link in sync with the chart's active period so
+    // the downloaded file matches what the user is actually looking at.
+    function syncExportButton(symbol, period) {
+      var btn = document.getElementById('export-csv-btn');
+      if (!btn) return;
+      btn.href = '/api/export/' + encodeURIComponent(symbol) + '/' + encodeURIComponent(period) + '.csv';
+      btn.dataset.period = period;
+      var label = btn.querySelector('.export-csv-period');
+      if (label) label.textContent = period.toUpperCase();
+    }
+
     document.querySelectorAll('.period-btn[data-period]').forEach(function(btn) {
       btn.addEventListener('click', function() {
         document.querySelectorAll('.period-btn[data-period]').forEach(function(b) { b.classList.remove('active'); });
         btn.classList.add('active');
         var symbol = btn.dataset.symbol;
         var period = btn.dataset.period;
+        syncExportButton(symbol, period);
         fetch('/api/candle/' + symbol + '/' + period)
           .then(function(r) { return r.json(); })
           .then(function(payload) { renderHistoricalChart('historicalChart', payload); });
