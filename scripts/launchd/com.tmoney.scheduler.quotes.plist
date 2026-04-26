@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  T Money Terminal — quotes refresh (every 15 min, weekdays 9:30–16:00 ET)
+
+  Install:
+    cp scripts/launchd/com.tmoney.scheduler.quotes.plist ~/Library/LaunchAgents/
+    # Edit WorkingDirectory below to match your checkout, then:
+    launchctl load -w ~/Library/LaunchAgents/com.tmoney.scheduler.quotes.plist
+
+  Uninstall:
+    launchctl unload -w ~/Library/LaunchAgents/com.tmoney.scheduler.quotes.plist
+
+  Sibling plists for the other tiers can be created by changing:
+    - Label
+    - --tier= argument
+    - StartCalendarInterval
+    - StandardOutPath / StandardErrorPath
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.tmoney.scheduler.quotes</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/env</string>
+    <string>bundle</string>
+    <string>exec</string>
+    <string>ruby</string>
+    <string>scripts/scheduler.rb</string>
+    <string>--tier=quotes</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/REPLACE/WITH/ABSOLUTE/PATH/TO/t-money-terminal</string>
+
+  <!-- Run every 15 minutes during US market hours (Mon–Fri 9:30–15:45 ET).
+       launchd doesn't support timezone-aware schedules; the scheduler.rb
+       script also gates on market hours, so we just run frequently and let
+       the script no-op outside trading. -->
+  <key>StartInterval</key>
+  <integer>900</integer>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/REPLACE/WITH/ABSOLUTE/PATH/TO/t-money-terminal/data/scheduler.quotes.log</string>
+  <key>StandardErrorPath</key>
+  <string>/REPLACE/WITH/ABSOLUTE/PATH/TO/t-money-terminal/data/scheduler.quotes.log</string>
+</dict>
+</plist>

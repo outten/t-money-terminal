@@ -47,7 +47,7 @@ module Providers
       url  = "#{FINNHUB_BASE}/company-news?symbol=#{URI.encode_www_form_component(symbol.upcase)}" \
              "&from=#{from}&to=#{to}&token=#{api_key}"
 
-      status, parsed, _body = HttpClient.get_json(url)
+      status, parsed, _body = HttpClient.get_json(url, provider: 'finnhub_news')
       return nil unless status.between?(200, 299) && parsed.is_a?(Array)
 
       parsed.filter_map do |row|
@@ -76,7 +76,7 @@ module Providers
              "&from=#{from}&sortBy=publishedAt&pageSize=50&language=en" \
              "&apiKey=#{api_key}"
 
-      status, parsed, _body = HttpClient.get_json(url)
+      status, parsed, _body = HttpClient.get_json(url, provider: 'newsapi')
       return nil unless status.between?(200, 299) && parsed.is_a?(Hash)
       return nil unless parsed['status'] == 'ok'
 

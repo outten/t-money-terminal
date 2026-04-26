@@ -1,5 +1,9 @@
 <h2>Cache Status</h2>
-<p class="subtitle">In-memory + disk cache state &mdash; <a href="/admin/cache">refresh</a></p>
+<p class="subtitle">
+  In-memory + disk cache state &mdash;
+  <a href="/admin/cache">refresh</a> &middot;
+  <a href="/admin/health">provider health</a>
+</p>
 
 <% if @cache_entries.empty? %>
   <div class="notice">No cache entries found. The cache is empty &mdash; visit the dashboard to populate it.</div>

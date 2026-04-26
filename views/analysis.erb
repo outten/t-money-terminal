@@ -16,6 +16,13 @@
       <span class="signal signal-<%= @signal.downcase %> signal-lg"><%= @signal %></span>
       <span class="signal-type-label"><%= @signal_type %></span>
     </div>
+    <button type="button" id="watchlist-toggle" class="watchlist-btn"
+            data-symbol="<%= @symbol %>" data-state="off" title="Add / remove from watchlist">
+      ☆ Add to Watchlist
+    </button>
+    <a href="/api/export/<%= @symbol %>/1y.csv" class="export-btn" title="Download 1-year OHLCV + indicators CSV">
+      ⬇ Export CSV
+    </a>
     <form method="POST" action="/refresh/analysis/<%= @symbol %>" style="display: inline;">
       <button type="submit" class="refresh-btn" title="Bust cache and reload live data">
         &#8635; Refresh
@@ -23,6 +30,55 @@
     </form>
   </div>
 </div>
+
+<!-- Position (Portfolio) -->
+<section class="analysis-section position-section">
+  <h3>Your Position</h3>
+  <% if @position %>
+    <div class="position-grid">
+      <div class="profile-field"><span class="field-label">Shares</span><span class="field-value mono"><%= @position[:shares] %></span></div>
+      <div class="profile-field"><span class="field-label">Cost Basis</span><span class="field-value mono">$<%= format('%.2f', @position[:cost_basis]) %></span></div>
+      <div class="profile-field"><span class="field-label">Market Value</span><span class="field-value mono"><%= @position[:market_value] ? format_money(@position[:market_value]) : '—' %></span></div>
+      <div class="profile-field">
+        <span class="field-label">Unrealized P&amp;L</span>
+        <span class="field-value mono <%= @position[:unrealized_pl] && @position[:unrealized_pl] >= 0 ? 'positive' : (@position[:unrealized_pl] && @position[:unrealized_pl] < 0 ? 'negative' : '') %>">
+          <%= @position[:unrealized_pl] ? format_money(@position[:unrealized_pl]) : '—' %>
+          <% if @position[:unrealized_pl_pct] %>
+            <span class="muted">(<%= format_percent(@position[:unrealized_pl_pct]) %>)</span>
+          <% end %>
+        </span>
+      </div>
+      <% if @position[:acquired_at] %>
+        <div class="profile-field"><span class="field-label">Acquired</span><span class="field-value"><%= @position[:acquired_at] %></span></div>
+      <% end %>
+    </div>
+    <% if @position[:notes] && !@position[:notes].empty? %>
+      <p class="muted" style="margin-top:8px"><%= @position[:notes] %></p>
+    <% end %>
+  <% end %>
+
+  <form action="/portfolio/upsert" method="post" class="portfolio-form">
+    <input type="hidden" name="symbol" value="<%= @symbol %>">
+    <label>Shares
+      <input type="number" step="0.000001" min="0.000001" name="shares" required
+             value="<%= @position && @position[:shares] %>" placeholder="100">
+    </label>
+    <label>Cost basis ($/share)
+      <input type="number" step="0.0001" min="0.0001" name="cost_basis" required
+             value="<%= @position && @position[:cost_basis] %>" placeholder="150.25">
+    </label>
+    <label>Acquired
+      <input type="date" name="acquired_at" value="<%= @position && @position[:acquired_at] && @position[:acquired_at][0,10] %>">
+    </label>
+    <label class="full-width">Notes
+      <input type="text" name="notes" maxlength="120" value="<%= @position && @position[:notes] %>">
+    </label>
+    <button type="submit" class="btn-primary"><%= @position ? 'Update position' : 'Save position' %></button>
+    <% if @position %>
+      <button type="submit" formaction="/portfolio/remove" class="link-btn" style="margin-left:8px">Remove</button>
+    <% end %>
+  </form>
+</section>
 
 <!-- Analyst Consensus -->
 <section class="analysis-section">
@@ -351,7 +407,11 @@
       <% end %>
     </tbody>
   </table>
-  <p class="data-source">Computed locally from cached historical closes and FRED risk-free rate.</p>
+  <p class="data-source">
+    Computed locally from cached historical
+    <%= rk[:total_return] ? 'dividend-adjusted closes (total return)' : 'closes' %>
+    and FRED risk-free rate.
+  </p>
 </section>
 <% end %>
 
@@ -411,43 +471,82 @@
   </div>
 </section>
 
-<!-- Historical Chart -->
+<!-- Historical Chart (TradingView lightweight-charts) -->
 <section class="analysis-section">
-  <h3>Historical Price</h3>
-  <div class="period-buttons">
-    <% %w[1d 1m 3m ytd 1y 5y].each do |p| %>
-    <button class="period-btn <%= p == '1y' ? 'active' : '' %>" data-period="<%= p %>" data-symbol="<%= @symbol %>"><%= p.upcase %></button>
-    <% end %>
+  <div class="chart-toolbar">
+    <h3>Historical Price</h3>
+    <div class="chart-legend">
+      <span class="legend-item"><i class="swatch sma20"></i>SMA 20</span>
+      <span class="legend-item"><i class="swatch sma50"></i>SMA 50</span>
+      <span class="legend-item"><i class="swatch sma200"></i>SMA 200</span>
+      <span class="legend-item"><i class="swatch bb"></i>Bollinger 20, 2σ</span>
+    </div>
   </div>
-  <div class="chart-box" id="historicalChartWrap">
-    <canvas id="historicalChart"></canvas>
+  <div class="chart-controls">
+    <div class="period-buttons">
+      <% %w[1d 1m 3m ytd 1y 5y].each do |p| %>
+      <button class="period-btn <%= p == '1y' ? 'active' : '' %>" data-period="<%= p %>" data-symbol="<%= @symbol %>"><%= p.upcase %></button>
+      <% end %>
+    </div>
+    <button id="log-scale-btn" class="period-btn" onclick="toggleHistoricalLogScale()">Log</button>
+  </div>
+  <div class="tv-chart-host" id="historicalChart">
     <% if !@historical || @historical.empty? %>
     <p class="no-data chart-no-data">No historical data available. Try <a href="/analysis/<%= @symbol %>?refresh=1">refreshing</a>.</p>
     <% end %>
   </div>
-  <p class="data-source">Source: Yahoo Finance / Tiingo / Alpha Vantage</p>
+  <p class="data-source">Source: Yahoo Finance / FMP / Tiingo / Alpha Vantage. Indicators computed locally.</p>
+</section>
+
+<!-- Price Alerts (§4.4) -->
+<section class="analysis-section alerts-section">
+  <h3>Price Alerts</h3>
+  <form id="alert-form" class="alert-form" data-symbol="<%= @symbol %>">
+    <label>
+      <span class="field-label">Trigger when price is</span>
+      <select name="condition">
+        <option value="above">at or above</option>
+        <option value="below">at or below</option>
+      </select>
+    </label>
+    <label>
+      <span class="field-label">Threshold ($)</span>
+      <input type="number" step="0.01" min="0" name="threshold" required placeholder="0.00">
+    </label>
+    <button type="submit" class="refresh-btn">Add Alert</button>
+  </form>
+  <ul id="alert-list" class="alert-list"></ul>
+  <p class="data-source">Alerts are checked via <code>make check-alerts</code> (or a cron running <code>scripts/check_alerts.rb</code>).</p>
 </section>
 
 <script>
   window.addEventListener('load', function() {
-    const initialData = <%= (@historical || []).to_json %>;
-    const labels = initialData.map(function(d) { return d.date; });
-    const prices  = initialData.map(function(d) { return d.close; });
-    renderHistoricalChart('historicalChart', labels, prices);
+    var initialBars = <%= (@historical || []).to_json %>;
+    // First paint from server-rendered bars (fast, no indicators). This may be
+    // empty if the cache was cold on initial page render — don't gate on it.
+    if (initialBars && initialBars.length) {
+      renderHistoricalChart('historicalChart', { bars: initialBars, indicators: {} });
+    }
+    // Always fetch the canonical payload (bars + indicators). This recovers the
+    // chart when the server-rendered @historical was empty at page load time.
+    fetch('/api/candle/<%= @symbol %>/1y')
+      .then(function(r) { return r.json(); })
+      .then(function(payload) {
+        if (payload && payload.bars && payload.bars.length) {
+          renderHistoricalChart('historicalChart', payload);
+        }
+      })
+      .catch(function() { /* keep initial paint (or empty state) on failure */ });
 
-    document.querySelectorAll('.period-btn').forEach(function(btn) {
+    document.querySelectorAll('.period-btn[data-period]').forEach(function(btn) {
       btn.addEventListener('click', function() {
-        document.querySelectorAll('.period-btn').forEach(function(b) { b.classList.remove('active'); });
+        document.querySelectorAll('.period-btn[data-period]').forEach(function(b) { b.classList.remove('active'); });
         btn.classList.add('active');
-        const symbol = btn.dataset.symbol;
-        const period = btn.dataset.period;
+        var symbol = btn.dataset.symbol;
+        var period = btn.dataset.period;
         fetch('/api/candle/' + symbol + '/' + period)
           .then(function(r) { return r.json(); })
-          .then(function(data) {
-            const lbl = data.map(function(d) { return d.date; });
-            const pts = data.map(function(d) { return d.close; });
-            renderHistoricalChart('historicalChart', lbl, pts);
-          });
+          .then(function(payload) { renderHistoricalChart('historicalChart', payload); });
       });
     });
   });

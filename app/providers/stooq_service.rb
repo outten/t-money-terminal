@@ -40,7 +40,7 @@ module Providers
 
       THROTTLE.wait!
       url = "#{BASE}?s=#{URI.encode_www_form_component(ticker)}&f=sd2t2ohlcv&h&e=csv"
-      status, body = HttpClient.get_text(url)
+      status, body = HttpClient.get_text(url, provider: 'stooq')
       return nil unless status.between?(200, 299) && body && !body.empty?
 
       parsed = parse_csv(body)

@@ -1,0 +1,103 @@
+<h2>Portfolio</h2>
+<p class="subtitle">Track holdings with cost basis and live unrealized P&amp;L. One position per symbol.</p>
+
+<% if @rows.empty? %>
+  <div class="notice">No holdings yet. Add your first position below.</div>
+<% else %>
+  <section class="portfolio-summary">
+    <div class="summary-card">
+      <div class="summary-label">Market Value</div>
+      <div class="summary-value mono"><%= format_money(@totals[:market_value]) %></div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Cost Basis</div>
+      <div class="summary-value mono"><%= format_money(@totals[:cost_value]) %></div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Unrealized P&amp;L</div>
+      <div class="summary-value mono <%= @totals[:unrealized_pl] >= 0 ? 'positive' : 'negative' %>">
+        <%= format_money(@totals[:unrealized_pl]) %>
+        <% if @totals[:unrealized_pl_pct] %>
+          <span class="summary-sub">(<%= format_percent(@totals[:unrealized_pl_pct]) %>)</span>
+        <% end %>
+      </div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Positions</div>
+      <div class="summary-value mono"><%= @totals[:holdings_count] %></div>
+    </div>
+  </section>
+
+  <table class="data-table portfolio-table">
+    <thead>
+      <tr>
+        <th>Symbol</th>
+        <th class="num">Shares</th>
+        <th class="num">Cost Basis</th>
+        <th class="num">Price</th>
+        <th class="num">Market Value</th>
+        <th class="num">Unrealized P&amp;L</th>
+        <th class="num">P&amp;L %</th>
+        <th class="num">Day</th>
+        <th class="num">Weight</th>
+        <th>Notes</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      <% @rows.each do |r| %>
+        <tr>
+          <td><a href="/analysis/<%= r[:symbol] %>"><%= r[:symbol] %></a></td>
+          <td class="num mono"><%= r[:shares] %></td>
+          <td class="num mono">$<%= format('%.2f', r[:cost_basis]) %></td>
+          <td class="num mono">
+            <%= r[:current_price] ? "$#{format('%.2f', r[:current_price])}" : '—' %>
+          </td>
+          <td class="num mono"><%= r[:market_value] ? format_money(r[:market_value]) : '—' %></td>
+          <td class="num mono <%= r[:unrealized_pl] && r[:unrealized_pl] >= 0 ? 'positive' : (r[:unrealized_pl] && r[:unrealized_pl] < 0 ? 'negative' : '') %>">
+            <%= r[:unrealized_pl] ? format_money(r[:unrealized_pl]) : '—' %>
+          </td>
+          <td class="num mono <%= r[:unrealized_pl_pct] && r[:unrealized_pl_pct] >= 0 ? 'positive' : (r[:unrealized_pl_pct] && r[:unrealized_pl_pct] < 0 ? 'negative' : '') %>">
+            <%= r[:unrealized_pl_pct] ? format_percent(r[:unrealized_pl_pct]) : '—' %>
+          </td>
+          <td class="num mono"><%= r[:day_change] || '—' %></td>
+          <td class="num mono"><%= r[:weight] ? format_percent(r[:weight], digits: 1) : '—' %></td>
+          <td class="muted"><%= r[:notes] %></td>
+          <td>
+            <form action="/portfolio/remove" method="post" style="margin:0">
+              <input type="hidden" name="symbol" value="<%= r[:symbol] %>">
+              <button type="submit" class="link-btn" title="Remove position">✕</button>
+            </form>
+          </td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+<% end %>
+
+<section class="portfolio-add">
+  <h3>Add or update a position</h3>
+  <form action="/portfolio/upsert" method="post" class="portfolio-form">
+    <label>Symbol
+      <input type="text" name="symbol" required autocomplete="off"
+             placeholder="AAPL" list="symbol-options" maxlength="10">
+    </label>
+    <label>Shares
+      <input type="number" step="0.000001" min="0.000001" name="shares" required placeholder="100">
+    </label>
+    <label>Cost basis ($/share)
+      <input type="number" step="0.0001" min="0.0001" name="cost_basis" required placeholder="150.25">
+    </label>
+    <label>Acquired
+      <input type="date" name="acquired_at">
+    </label>
+    <label class="full-width">Notes (optional)
+      <input type="text" name="notes" maxlength="120" placeholder="Long-term hold">
+    </label>
+    <button type="submit" class="btn-primary">Save position</button>
+  </form>
+  <p class="data-source">
+    Cost basis is the average price per share at entry. Use the same form to update an existing position
+    — it replaces the prior record. Unknown symbols are silently ignored.
+  </p>
+</section>

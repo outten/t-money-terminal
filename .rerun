@@ -1,0 +1,11 @@
+--dir app
+--dir views
+--dir public
+--dir scripts
+--pattern **/*.{rb,erb,js,css,yml,ru}
+--ignore data/*
+--ignore tmp/*
+--ignore .cache/*
+--ignore .git/*
+--ignore *.log
+--name t-money-terminal

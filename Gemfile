@@ -6,3 +6,5 @@ gem 'rspec'
 gem 'rack-test'
 gem 'dotenv'
 gem 'ostruct'
+# csv is no longer a default gem starting with Ruby 3.4; needed by /api/export.
+gem 'csv'

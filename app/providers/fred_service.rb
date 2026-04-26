@@ -103,7 +103,7 @@ module Providers
       query = params.merge(api_key: api_key).map { |k, v| "#{k}=#{URI.encode_www_form_component(v.to_s)}" }.join('&')
       url   = "#{BASE}#{path}?#{query}"
 
-      status, parsed, _body = HttpClient.get_json(url)
+      status, parsed, _body = HttpClient.get_json(url, provider: 'fred')
       unless status.between?(200, 299)
         warn "[FredService] HTTP #{status} for #{path}" unless test_env?
         return nil

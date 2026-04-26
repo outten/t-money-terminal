@@ -149,7 +149,7 @@ module Providers
       query = params.merge(apikey: api_key).map { |k, v| "#{k}=#{URI.encode_www_form_component(v)}" }.join('&')
       url   = "#{BASE}#{path}?#{query}"
 
-      status, parsed, body = HttpClient.get_json(url)
+      status, parsed, body = HttpClient.get_json(url, provider: 'fmp')
 
       if status == 429
         warn '[FmpService] Rate limited (429)' unless test_env?
