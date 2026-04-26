@@ -1,10 +1,19 @@
 require 'sinatra'
 require 'dotenv'
 Dotenv.load(File.expand_path('../../.credentials', __FILE__))
+require 'json'
+require 'csv'
+require 'date'
+require 'set'
 require_relative 'market_data_service'
 require_relative 'recommendation_service'
 require_relative 'providers'
 require_relative 'analytics'
+require_relative 'symbol_index'
+require_relative 'watchlist_store'
+require_relative 'alerts_store'
+require_relative 'portfolio_store'
+require_relative 'health_registry'
 
 class TMoneyTerminal < Sinatra::Base
   set :views, File.expand_path('../../views', __FILE__)
@@ -29,6 +38,18 @@ class TMoneyTerminal < Sinatra::Base
         acc[key] = row if row
       end
     end || {}
+
+    # Watchlist — server-side persisted; rendered as a quote table.
+    @watchlist_symbols = WatchlistStore.read
+    @watchlist_quotes  = @watchlist_symbols.map do |sym|
+      q = safe_fetch { MarketDataService.quote(sym) }
+      { symbol: sym, quote: q }
+    end
+
+    # Upcoming earnings (next 7 days) — cross-reference the FMP calendar
+    # against every symbol the app knows about (REGIONS + curated + watchlist).
+    @upcoming_earnings = safe_fetch { upcoming_earnings_for_universe } || []
+
     erb :dashboard
   end
 
@@ -78,7 +99,10 @@ class TMoneyTerminal < Sinatra::Base
     redirect "/analysis/#{symbol}", 302
   end
 
-  VALID_SYMBOLS      = (MarketDataService::REGIONS.values.flatten).freeze
+  # Legacy accessor — retained for any external caller. The full whitelist now
+  # lives in SymbolIndex (REGIONS ∪ curated list) so the search box can route
+  # to any covered ticker without a pre-registered hardcoded entry.
+  VALID_SYMBOLS      = SymbolIndex.symbols
   VALID_REGION_NAMES = MarketDataService::REGIONS.keys.map(&:to_s).freeze
 
   get '/region/:name' do
@@ -123,6 +147,11 @@ class TMoneyTerminal < Sinatra::Base
     # Analytics (pure Ruby, zero API calls) — use cached historicals.
     @analytics = safe_fetch { compute_analytics(symbol, @historical) } || {}
 
+    # Holding (if any) — joined to live quote so the Position panel can show
+    # market value and unrealized P&L without re-fetching.
+    raw_holding = PortfolioStore.find(symbol)
+    @position   = raw_holding ? valuate_holding(raw_holding) : nil
+
     # Determine if any data is stale (served from persistent fallback cache)
     stale_keys  = [symbol, "analyst:#{symbol}", "profile:#{symbol}", "candle:#{symbol}:1y"]
     stale_infos = stale_keys.map { |k| MarketDataService.cache_info_for(k) }.select { |i| i[:is_stale] }
@@ -144,8 +173,8 @@ class TMoneyTerminal < Sinatra::Base
     halt 400, { error: 'Invalid period' }.to_json unless valid_periods.include?(period)
 
     content_type :json
-    data = MarketDataService.historical(symbol, period)
-    data ? data.to_json : [].to_json
+    bars = MarketDataService.historical(symbol, period) || []
+    { bars: bars, indicators: compute_indicator_series(bars) }.to_json
   end
 
   get '/api/market/:region' do
@@ -164,7 +193,239 @@ class TMoneyTerminal < Sinatra::Base
     erb :admin_cache
   end
 
+  get '/admin/health' do
+    @health_rows = HealthRegistry.summary
+    erb :admin_health
+  end
+
+  get '/api/admin/health.json' do
+    content_type :json
+    { providers: HealthRegistry.summary.map { |row|
+        row.merge(
+          last_ok_at:    row[:last_ok_at]&.iso8601,
+          last_error_at: row[:last_error_at]&.iso8601
+        )
+      } }.to_json
+  end
+
+  # -------------------------------------------------------------------------
+  # Search (§4.1)
+  # -------------------------------------------------------------------------
+
+  # Autocomplete feed for the top-nav search box. If `q` is provided, returns
+  # ranked prefix/substring matches; otherwise returns the full universe so
+  # the client can cache it locally for offline filtering.
+  get '/api/symbols' do
+    content_type :json
+    q     = params['q'].to_s.strip
+    limit = (params['limit'] || 10).to_i.clamp(1, 50)
+    results = q.empty? ? SymbolIndex.to_a : SymbolIndex.search(q, limit: limit)
+    { results: results, total: SymbolIndex.to_a.length }.to_json
+  end
+
+  # -------------------------------------------------------------------------
+  # Watchlist (§4.2)
+  # -------------------------------------------------------------------------
+
+  get '/api/watchlist' do
+    content_type :json
+    { symbols: WatchlistStore.read }.to_json
+  end
+
+  post '/api/watchlist' do
+    content_type :json
+    symbol = (params['symbol'] || request_json['symbol']).to_s.upcase
+    halt 400, { error: 'symbol required' }.to_json if symbol.empty?
+    halt 404, { error: 'Unknown symbol' }.to_json unless SymbolIndex.known?(symbol)
+    { symbols: WatchlistStore.add(symbol) }.to_json
+  end
+
+  delete '/api/watchlist/:symbol' do
+    content_type :json
+    { symbols: WatchlistStore.remove(params['symbol']) }.to_json
+  end
+
+  # Form-POST fallback used by the dashboard watchlist row's ✕ button so the
+  # remove action works even when JS is disabled / hasn't loaded yet.
+  post '/watchlist/remove' do
+    WatchlistStore.remove(params['symbol']) if params['symbol']
+    redirect '/dashboard', 302
+  end
+
+  # -------------------------------------------------------------------------
+  # Portfolio
+  # -------------------------------------------------------------------------
+
+  get '/portfolio' do
+    holdings = PortfolioStore.read
+    @rows    = holdings.map { |h| valuate_holding(h) }
+    @totals  = portfolio_totals(@rows)
+    erb :portfolio
+  end
+
+  get '/api/portfolio' do
+    content_type :json
+    rows = PortfolioStore.read.map { |h| valuate_holding(h) }
+    { holdings: rows, totals: portfolio_totals(rows) }.to_json
+  end
+
+  post '/api/portfolio' do
+    content_type :json
+    body = request_json
+    begin
+      holding = PortfolioStore.upsert(
+        symbol:      (body['symbol']      || params['symbol']),
+        shares:      (body['shares']      || params['shares']),
+        cost_basis:  (body['cost_basis']  || params['cost_basis']),
+        acquired_at: (body['acquired_at'] || params['acquired_at']),
+        notes:       (body['notes']       || params['notes'])
+      )
+      halt 404, { error: 'Unknown symbol' }.to_json unless SymbolIndex.known?(holding[:symbol])
+      holding.to_json
+    rescue ArgumentError => e
+      halt 400, { error: e.message }.to_json
+    end
+  end
+
+  delete '/api/portfolio/:symbol' do
+    content_type :json
+    list = PortfolioStore.remove(params['symbol'])
+    { holdings: list }.to_json
+  end
+
+  # Form-POST fallback for the /portfolio "Add" form (works without JS).
+  post '/portfolio/upsert' do
+    if SymbolIndex.known?(params['symbol'].to_s.upcase)
+      begin
+        PortfolioStore.upsert(
+          symbol:      params['symbol'],
+          shares:      params['shares'],
+          cost_basis:  params['cost_basis'],
+          acquired_at: params['acquired_at'],
+          notes:       params['notes']
+        )
+      rescue ArgumentError
+        # fall through to redirect — UI shows current state
+      end
+    end
+    redirect '/portfolio', 302
+  end
+
+  post '/portfolio/remove' do
+    PortfolioStore.remove(params['symbol']) if params['symbol']
+    redirect '/portfolio', 302
+  end
+
+  # -------------------------------------------------------------------------
+  # Price alerts (§4.4)
+  # -------------------------------------------------------------------------
+
+  get '/api/alerts' do
+    content_type :json
+    sym = params['symbol']&.upcase
+    list = AlertsStore.read
+    list = list.select { |a| a[:symbol] == sym } if sym
+    { alerts: list }.to_json
+  end
+
+  post '/api/alerts' do
+    content_type :json
+    body = request_json
+    begin
+      alert = AlertsStore.add(
+        symbol:    body['symbol']    || params['symbol'],
+        condition: body['condition'] || params['condition'],
+        threshold: body['threshold'] || params['threshold']
+      )
+      alert.to_json
+    rescue ArgumentError => e
+      halt 400, { error: e.message }.to_json
+    end
+  end
+
+  delete '/api/alerts/:id' do
+    content_type :json
+    { alerts: AlertsStore.remove(params['id']) }.to_json
+  end
+
+  # -------------------------------------------------------------------------
+  # CSV / JSON export (§4.5)
+  # -------------------------------------------------------------------------
+
+  get '/api/export/:symbol/:period.csv' do
+    symbol = params['symbol'].upcase
+    halt 404, 'Symbol not found' unless SymbolIndex.known?(symbol)
+
+    period = params['period']
+    halt 400, 'Invalid period' unless %w[1d 1m 3m ytd 1y 5y].include?(period)
+
+    bars       = MarketDataService.historical(symbol, period) || []
+    indicators = compute_indicator_series(bars)
+
+    content_type 'text/csv'
+    attachment  "#{symbol}_#{period}.csv"
+
+    CSV.generate do |csv|
+      csv << %w[date open high low close adj_close volume sma20 sma50 sma200
+                bb_upper bb_middle bb_lower rsi macd macd_signal macd_histogram]
+      bars.each_with_index do |b, i|
+        csv << [
+          b[:date]      || b['date'],
+          b[:open]      || b['open'],
+          b[:high]      || b['high'],
+          b[:low]       || b['low'],
+          b[:close]     || b['close'],
+          b[:adj_close] || b['adj_close'],
+          b[:volume]    || b['volume'],
+          indicators[:sma20]&.dig(i),
+          indicators[:sma50]&.dig(i),
+          indicators[:sma200]&.dig(i),
+          indicators[:bb_upper]&.dig(i),
+          indicators[:bb_middle]&.dig(i),
+          indicators[:bb_lower]&.dig(i),
+          indicators[:rsi]&.dig(i),
+          indicators[:macd]&.dig(i),
+          indicators[:macd_signal]&.dig(i),
+          indicators[:macd_histogram]&.dig(i)
+        ]
+      end
+    end
+  end
+
+  # -------------------------------------------------------------------------
+  # Compare mode (§4.6)
+  # -------------------------------------------------------------------------
+
+  get '/compare' do
+    requested = (params['symbols'] || '').split(',').map { |s| s.strip.upcase }.reject(&:empty?)
+    @symbols  = requested.select { |s| SymbolIndex.known?(s) }.first(6)
+    @period   = %w[1m 3m ytd 1y 5y].include?(params['period']) ? params['period'] : '1y'
+    erb :compare
+  end
+
+  # Returns rebased-to-100 series for /compare. Each series is an array of
+  # { date:, value: } where value = 100 * close / first_close.
+  get '/api/compare' do
+    content_type :json
+    symbols = (params['symbols'] || '').split(',').map { |s| s.strip.upcase }
+                .select { |s| SymbolIndex.known?(s) }.first(6)
+    period  = %w[1m 3m ytd 1y 5y].include?(params['period']) ? params['period'] : '1y'
+
+    series = symbols.map do |sym|
+      bars = safe_fetch { MarketDataService.historical(sym, period) } || []
+      points = rebase_to_100(bars)
+      { symbol: sym, points: points }
+    end
+    { period: period, series: series }.to_json
+  end
+
   helpers do
+    # Cache-busting asset mtime used in layout.erb for /style.css and /app.js.
+    def asset_mtime(relative_path)
+      path = File.join(settings.root, '..', relative_path)
+      File.exist?(path) ? File.mtime(path).to_i : 0
+    end
+
     # Wrap provider calls so any failure (missing key, network error, parse
     # error) yields nil instead of 500ing the page.
     def safe_fetch
@@ -217,6 +478,39 @@ class TMoneyTerminal < Sinatra::Base
     end
   end
 
+  # --- Indicator series for the chart API --------------------------------
+
+  # Produces parallel arrays (same length as bars) of SMA 20/50/200, Bollinger
+  # Bands (20, 2σ), RSI(14), and MACD(12/26/9). Used by /api/candle so the
+  # TradingView chart can render overlays without computing anything client-side.
+  def compute_indicator_series(bars)
+    return empty_indicator_series if !bars.is_a?(Array) || bars.length < 2
+
+    closes = bars.map { |b| (b[:close] || b['close']).to_f }
+    ind    = Analytics::Indicators
+
+    macd   = ind.macd(closes)
+    bb     = ind.bollinger(closes, period: 20, stddev: 2)
+
+    {
+      sma20:          ind.sma(closes, 20),
+      sma50:          ind.sma(closes, 50),
+      sma200:         ind.sma(closes, 200),
+      bb_upper:       bb[:upper],
+      bb_middle:      bb[:middle],
+      bb_lower:       bb[:lower],
+      rsi:            ind.rsi(closes, period: 14),
+      macd:           macd[:macd],
+      macd_signal:    macd[:signal],
+      macd_histogram: macd[:histogram]
+    }
+  end
+
+  def empty_indicator_series
+    %i[sma20 sma50 sma200 bb_upper bb_middle bb_lower rsi macd macd_signal macd_histogram]
+      .each_with_object({}) { |k, acc| acc[k] = [] }
+  end
+
   # --- Analytics orchestration --------------------------------------------
 
   # Compute the full analytics bundle for a symbol from a cached historical
@@ -225,8 +519,15 @@ class TMoneyTerminal < Sinatra::Base
   def compute_analytics(symbol, historical)
     return {} unless historical.is_a?(Array) && historical.length >= 2
 
+    # Indicators use raw close (chart-correct).
     closes = historical.map { |p| (p[:close] || p['close']).to_f }
     latest_close = closes.last
+
+    # Risk metrics prefer dividend-adjusted close when available — Sharpe and
+    # Sortino on raw close are wrong for dividend payers. Falls back to raw
+    # close for providers that don't return adj_close (Finnhub, AV weekly).
+    has_adj      = historical.any? { |p| p[:adj_close] || p['adj_close'] }
+    risk_closes  = Analytics::Risk.closes_from(historical, total_return: has_adj)
 
     # --- Technical indicators --------------------------------------------
     sma50   = Analytics::Indicators.latest(Analytics::Indicators.sma(closes, 50))
@@ -258,15 +559,16 @@ class TMoneyTerminal < Sinatra::Base
     rf = safe_fetch { Providers::FredService.risk_free_rate(term: :treasury_3mo) } || 0.0
 
     risk = {
-      annualized_return:     Analytics::Risk.annualized_return(closes),
-      annualized_volatility: Analytics::Risk.annualized_volatility(closes),
-      sharpe:                Analytics::Risk.sharpe(closes, risk_free_rate: rf),
-      sortino:               Analytics::Risk.sortino(closes, risk_free_rate: rf),
-      max_drawdown:          Analytics::Risk.max_drawdown(closes),
-      var_historical_95:     Analytics::Risk.var_historical(closes, confidence: 0.95),
-      var_parametric_95:     Analytics::Risk.var_parametric(closes, confidence: 0.95),
+      annualized_return:     Analytics::Risk.annualized_return(risk_closes),
+      annualized_volatility: Analytics::Risk.annualized_volatility(risk_closes),
+      sharpe:                Analytics::Risk.sharpe(risk_closes, risk_free_rate: rf),
+      sortino:               Analytics::Risk.sortino(risk_closes, risk_free_rate: rf),
+      max_drawdown:          Analytics::Risk.max_drawdown(risk_closes),
+      var_historical_95:     Analytics::Risk.var_historical(risk_closes, confidence: 0.95),
+      var_parametric_95:     Analytics::Risk.var_parametric(risk_closes, confidence: 0.95),
       risk_free_rate:        rf,
-      beta_vs_spy:           compute_beta_vs_spy(symbol, historical)
+      beta_vs_spy:           compute_beta_vs_spy(symbol, historical),
+      total_return:          has_adj
     }
 
     # --- Black-Scholes illustration (ATM, 30 days, realised vol) ---------
@@ -294,6 +596,102 @@ class TMoneyTerminal < Sinatra::Base
     { indicators: indicators, risk: risk, bs: bs }
   end
 
+  # Parse a JSON request body into a Hash. Returns {} for empty/invalid bodies
+  # so route handlers can merge with params transparently.
+  def request_json
+    @request_json ||= begin
+      body = request.body.read
+      request.body.rewind
+      body.empty? ? {} : (JSON.parse(body) rescue {})
+    end
+  end
+
+  # Rebase a bars array ([{date:, close:}, ...]) to 100 on the first close.
+  # Used by /api/compare so multiple symbols render on a shared scale.
+  def rebase_to_100(bars)
+    return [] unless bars.is_a?(Array) && !bars.empty?
+    first = (bars.first[:close] || bars.first['close']).to_f
+    return [] if first == 0
+    bars.map do |b|
+      date  = b[:date]  || b['date']
+      close = (b[:close] || b['close']).to_f
+      { date: date, value: (100.0 * close / first).round(4) }
+    end
+  end
+
+  # Valuate a single holding by joining against the live quote. Returns the
+  # same hash with derived fields: current_price, market_value, cost_value,
+  # unrealized_pl ($), unrealized_pl_pct, day_change_pct (from quote).
+  # Missing/failed quotes still return the entry with current_price: nil.
+  def valuate_holding(h)
+    sym   = h[:symbol]
+    quote = safe_fetch { MarketDataService.quote(sym) } || {}
+    price = (quote['05. price'] || quote[:price]).to_f
+
+    cost_value      = (h[:shares].to_f * h[:cost_basis].to_f).round(2)
+    market_value    = price > 0 ? (h[:shares].to_f * price).round(2) : nil
+    unrealized_pl   = market_value ? (market_value - cost_value).round(2) : nil
+    unrealized_pct  = (market_value && cost_value > 0) ? ((market_value - cost_value) / cost_value) : nil
+    day_change_str  = quote['10. change percent'] || quote[:change]
+
+    h.merge(
+      current_price:     price > 0 ? price.round(4) : nil,
+      cost_value:        cost_value,
+      market_value:      market_value,
+      unrealized_pl:     unrealized_pl,
+      unrealized_pl_pct: unrealized_pct,
+      day_change:        day_change_str
+    )
+  end
+
+  # Sum across valuated rows. Rows missing market_value (provider failed) are
+  # excluded from the value totals but still counted in cost_value so the user
+  # sees that something is missing rather than a silently understated total.
+  def portfolio_totals(rows)
+    cost_value   = rows.sum { |r| r[:cost_value].to_f }
+    market_value = rows.sum { |r| r[:market_value].to_f }
+    pl           = market_value - cost_value
+    pl_pct       = cost_value > 0 ? pl / cost_value : nil
+
+    # Per-row weight as a percentage of total market value (nil when total is 0).
+    rows.each do |r|
+      r[:weight] = (market_value > 0 && r[:market_value]) ? (r[:market_value] / market_value) : nil
+    end
+
+    {
+      cost_value:        cost_value.round(2),
+      market_value:      market_value.round(2),
+      unrealized_pl:     pl.round(2),
+      unrealized_pl_pct: pl_pct,
+      holdings_count:    rows.length
+    }
+  end
+
+  # Combine all known symbols (REGIONS + curated + watchlist) against the FMP
+  # earnings calendar and return the next ≤7 rows sorted by date.
+  def upcoming_earnings_for_universe(days_ahead: 7, limit: 10)
+    calendar = Providers::FmpService.earnings_calendar(days_ahead: days_ahead)
+    return [] unless calendar.is_a?(Array) && !calendar.empty?
+
+    universe = (SymbolIndex.symbols + WatchlistStore.read).map(&:upcase).uniq.to_set
+    today    = Date.today
+    cutoff   = today + days_ahead
+
+    calendar.filter_map do |row|
+      sym = row['symbol']&.upcase
+      next unless sym && universe.include?(sym)
+      date = row['date'] && (Date.parse(row['date']) rescue nil)
+      next unless date && date >= today && date <= cutoff
+      {
+        symbol: sym,
+        date:   date,
+        eps_estimate: row['epsEstimated'],
+        revenue_estimate: row['revenueEstimated'],
+        time:   row['time']
+      }
+    end.sort_by { |r| r[:date] }.first(limit)
+  end
+
   # Returns the beta of `symbol` vs SPY, or nil if SPY is the symbol itself
   # or historical data is unavailable / too short.
   def compute_beta_vs_spy(symbol, historical)
@@ -302,7 +700,11 @@ class TMoneyTerminal < Sinatra::Base
     spy = safe_fetch { MarketDataService.historical('SPY', '1y') }
     return nil if spy.nil? || spy.empty?
 
-    asset_closes, bench_closes = Analytics::Risk.align_on_dates(historical, spy)
+    # Use adj_close when both series carry it — beta on total returns is the
+    # correct interpretation for dividend-paying assets.
+    field = (historical.any? { |p| p[:adj_close] || p['adj_close'] } &&
+             spy.any?        { |p| p[:adj_close] || p['adj_close'] }) ? :adj_close : :close
+    asset_closes, bench_closes = Analytics::Risk.align_on_dates(historical, spy, field: field)
     return nil if asset_closes.length < 2
     Analytics::Risk.beta(asset_closes, bench_closes)
   end

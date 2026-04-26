@@ -1,0 +1,62 @@
+<h2>Provider Health</h2>
+<p class="subtitle">
+  In-memory call counters since last app restart &mdash;
+  <a href="/admin/health">refresh</a> &middot;
+  <a href="/admin/cache">cache status</a>
+</p>
+
+<% if @health_rows.empty? %>
+  <div class="notice">No provider calls recorded yet. Browse the dashboard or an analysis page to populate this view.</div>
+<% else %>
+  <p class="cache-meta"><%= @health_rows.size %> providers tracked &mdash; last <%= HealthRegistry::CAPACITY %> calls per provider</p>
+  <table class="cache-table">
+    <thead>
+      <tr>
+        <th>Provider</th>
+        <th>Calls</th>
+        <th>OK</th>
+        <th>Error</th>
+        <th>Success rate</th>
+        <th>Avg latency</th>
+        <th>Last OK</th>
+        <th>Last error</th>
+        <th>Last reason</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% @health_rows.each do |row| %>
+        <% rate = row[:success_rate] %>
+        <% rate_class = rate.nil? ? '' : (rate >= 0.95 ? 'signal-buy' : (rate >= 0.5 ? 'signal-hold' : 'signal-sell')) %>
+        <tr>
+          <td><code><%= row[:provider] %></code></td>
+          <td><%= row[:total] %></td>
+          <td><%= row[:ok] %></td>
+          <td><%= row[:error] %></td>
+          <td>
+            <% if rate.nil? %>
+              &mdash;
+            <% else %>
+              <span class="signal-badge <%= rate_class %>"><%= (rate * 100).round(1) %>%</span>
+            <% end %>
+          </td>
+          <td><%= row[:avg_latency_ms] ? "#{row[:avg_latency_ms]} ms" : '—' %></td>
+          <td>
+            <% if row[:last_ok_at] %>
+              <span title="<%= row[:last_ok_at].iso8601 %>"><%= row[:last_ok_at].strftime('%H:%M:%S') %></span>
+            <% else %>
+              &mdash;
+            <% end %>
+          </td>
+          <td>
+            <% if row[:last_error_at] %>
+              <span title="<%= row[:last_error_at].iso8601 %>"><%= row[:last_error_at].strftime('%H:%M:%S') %></span>
+            <% else %>
+              &mdash;
+            <% end %>
+          </td>
+          <td><%= row[:last_error_reason] || '—' %></td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+<% end %>

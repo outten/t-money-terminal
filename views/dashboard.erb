@@ -93,6 +93,71 @@
 </section>
 <% end %>
 
+<% if @watchlist_quotes && !@watchlist_quotes.empty? %>
+<section class="analysis-section watchlist-section">
+  <h3>My Watchlist</h3>
+  <table class="summary-table data-table">
+    <thead>
+      <tr>
+        <th>Symbol</th>
+        <th class="num">Price</th>
+        <th class="num">Change</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      <% @watchlist_quotes.each do |entry| %>
+        <% q = entry[:quote] || {} %>
+        <% price  = q['05. price']          || q[:price] %>
+        <% change = q['10. change percent'] || q[:change_percent] || q[:change] %>
+        <% chg_f  = change.to_s.gsub('%', '').to_f %>
+        <tr>
+          <td><a href="/analysis/<%= entry[:symbol] %>" class="watchlist-symbol"><%= entry[:symbol] %></a></td>
+          <td class="num mono"><%= price ? (price.to_s.start_with?('$') ? price : "$#{price}") : '—' %></td>
+          <td class="num mono <%= chg_f >= 0 ? 'positive' : 'negative' %>"><%= change || '—' %></td>
+          <td class="num">
+            <form method="POST" action="/watchlist/remove" style="display:inline">
+              <input type="hidden" name="symbol" value="<%= entry[:symbol] %>">
+              <button type="submit" class="watchlist-remove" title="Remove from watchlist">✕</button>
+            </form>
+          </td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+  <p class="data-source">Persisted in <code>data/watchlist.json</code>.</p>
+</section>
+<% end %>
+
+<% if @upcoming_earnings && !@upcoming_earnings.empty? %>
+<section class="analysis-section earnings-section">
+  <h3>Upcoming Earnings (Next 7 Days)</h3>
+  <table class="summary-table data-table">
+    <thead>
+      <tr>
+        <th>Symbol</th>
+        <th>Date</th>
+        <th>Time</th>
+        <th class="num">EPS Est.</th>
+        <th class="num">Revenue Est.</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% @upcoming_earnings.each do |e| %>
+        <tr>
+          <td><a href="/analysis/<%= e[:symbol] %>"><%= e[:symbol] %></a></td>
+          <td class="mono"><%= e[:date] %></td>
+          <td class="muted"><%= e[:time] || '—' %></td>
+          <td class="num mono"><%= e[:eps_estimate] ? format('%.2f', e[:eps_estimate].to_f) : '—' %></td>
+          <td class="num mono"><%= e[:revenue_estimate] ? format_money(e[:revenue_estimate]) : '—' %></td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+  <p class="data-source">Source: Financial Modeling Prep</p>
+</section>
+<% end %>
+
 <%= erb :_symbol_table, locals: { quotes: @data[:quotes] } %>
 
 <div class="chart-row">

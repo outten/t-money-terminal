@@ -3,3 +3,8 @@
 tmp/
 .cache/
 data/cache/
+data/watchlist.json
+data/alerts.json
+data/alerts_triggered.log
+data/portfolio.json
+data/scheduler*.log

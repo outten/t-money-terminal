@@ -1,0 +1,46 @@
+<div class="page-header">
+  <div>
+    <h2>Compare</h2>
+    <p class="subtitle">Rebased-to-100 performance comparison across up to 6 symbols.</p>
+  </div>
+</div>
+
+<section class="analysis-section">
+  <h3>Selection</h3>
+  <form method="GET" action="/compare" class="compare-form">
+    <label>
+      <span class="field-label">Symbols (comma-separated)</span>
+      <input type="text" name="symbols" value="<%= (@symbols || []).join(',') %>"
+             placeholder="AAPL,MSFT,GOOGL" autocomplete="off" spellcheck="false">
+    </label>
+    <label>
+      <span class="field-label">Period</span>
+      <select name="period">
+        <% %w[1m 3m ytd 1y 5y].each do |p| %>
+        <option value="<%= p %>" <%= @period == p ? 'selected' : '' %>><%= p.upcase %></option>
+        <% end %>
+      </select>
+    </label>
+    <button type="submit" class="refresh-btn">Compare</button>
+  </form>
+  <p class="data-source">Tip: up to 6 symbols are honoured. Each series is normalised to 100 at the first bar of the selected period, so lines above 100 = outperformance.</p>
+</section>
+
+<% if @symbols && !@symbols.empty? %>
+<section class="analysis-section">
+  <h3>
+    <%= @symbols.join(' · ') %>
+    <small class="muted">— <%= @period.upcase %></small>
+  </h3>
+  <div class="chart-box compare-chart-box">
+    <div id="compareChart"
+         class="compare-chart-host"
+         data-symbols="<%= @symbols.join(',') %>"
+         data-period="<%= @period %>"></div>
+  </div>
+</section>
+<% else %>
+<section class="analysis-section">
+  <p class="no-data">Enter at least one known symbol above to compare.</p>
+</section>
+<% end %>

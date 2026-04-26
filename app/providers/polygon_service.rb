@@ -89,7 +89,7 @@ module Providers
       query = params.merge(apiKey: api_key).map { |k, v| "#{k}=#{URI.encode_www_form_component(v.to_s)}" }.join('&')
       url   = "#{BASE}#{path}?#{query}"
 
-      status, parsed, _body = HttpClient.get_json(url)
+      status, parsed, _body = HttpClient.get_json(url, provider: 'polygon')
 
       if status == 429
         warn '[PolygonService] Rate limited (429)' unless test_env?

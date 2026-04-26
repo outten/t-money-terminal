@@ -26,7 +26,7 @@ module Providers
 
       THROTTLE.wait!
       url = "#{BASE}/submissions/CIK#{cik10}.json"
-      status, parsed, _body = HttpClient.get_json(url, headers: { 'User-Agent' => USER_AGENT })
+      status, parsed, _body = HttpClient.get_json(url, headers: { 'User-Agent' => USER_AGENT }, provider: 'edgar')
       return nil unless status.between?(200, 299) && parsed.is_a?(Hash)
 
       recent = parsed.dig('filings', 'recent') || {}

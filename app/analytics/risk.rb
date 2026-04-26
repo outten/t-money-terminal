@@ -135,20 +135,38 @@ module Analytics
       denom.zero? ? nil : cov / denom
     end
 
-    # Align two {date, close} series on common dates. Returns [closes_a, closes_b]
-    # in chronological order containing only dates present in both.
-    def align_on_dates(series_a, series_b)
+    # Align two {date, close, [adj_close]} series on common dates. Returns
+    # [series_a_values, series_b_values] in chronological order containing only
+    # dates present in both. When `field: :adj_close` is requested and a row
+    # has it, it is preferred over the raw close (falls back to close otherwise).
+    def align_on_dates(series_a, series_b, field: :close)
       return [[], []] unless series_a.is_a?(Array) && series_b.is_a?(Array)
-      map_b = series_b.to_h { |p| [p[:date] || p['date'], p[:close] || p['close']] }
+      map_b = series_b.to_h { |p| [p[:date] || p['date'], pick_value(p, field)] }
       a_out = []
       b_out = []
       series_a.each do |p|
         d = p[:date] || p['date']
         next unless map_b.key?(d)
-        a_out << (p[:close] || p['close']).to_f
+        a_out << pick_value(p, field).to_f
         b_out << map_b[d].to_f
       end
       [a_out, b_out]
+    end
+
+    # Extracts the chosen field (with adj_close→close fallback) from a bar.
+    def pick_value(point, field)
+      if field == :adj_close
+        point[:adj_close] || point['adj_close'] || point[:close] || point['close']
+      else
+        point[:close] || point['close']
+      end
+    end
+
+    # Convenience: returns a float array for a series of bars, preferring
+    # adj_close when `total_return: true` and the bar has it.
+    def closes_from(bars, total_return: false)
+      field = total_return ? :adj_close : :close
+      bars.map { |p| pick_value(p, field).to_f }
     end
 
     # Beasley-Springer-Moro rational approximation of the inverse standard

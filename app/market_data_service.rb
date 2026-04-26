@@ -7,6 +7,7 @@ require 'net/http'
 require 'json'
 require 'time'
 require 'fileutils'
+require_relative 'health_registry'
 
 class MarketDataService
   CACHE_TTL  = 3600 # 1 hour
@@ -279,7 +280,15 @@ class MarketDataService
               date  = row['date']&.slice(0, 10)
               close = row['close'] || row['adjClose']
               next unless date && close
-              { date: date, close: close.to_f.round(2) }
+              {
+                date:      date,
+                open:      (row['open']   || row['adjOpen'])&.to_f&.round(2),
+                high:      (row['high']   || row['adjHigh'])&.to_f&.round(2),
+                low:       (row['low']    || row['adjLow'])&.to_f&.round(2),
+                close:     close.to_f.round(2),
+                adj_close: row['adjClose']&.to_f&.round(4),
+                volume:    (row['volume'] || row['adjVolume'])&.to_i
+              }
             }.sort_by { |p| p[:date] }
 
             today   = Date.today
@@ -326,7 +335,14 @@ class MarketDataService
       return { rate_limited: data.key?('Information') || data.key?('Note') } unless series && !series.empty?
 
       all_points = series.map { |date, vals|
-        { date: date, close: vals['4. close'].to_f.round(2) }
+        {
+          date:   date,
+          open:   vals['1. open']&.to_f&.round(2),
+          high:   vals['2. high']&.to_f&.round(2),
+          low:    vals['3. low']&.to_f&.round(2),
+          close:  vals['4. close'].to_f.round(2),
+          volume: vals['5. volume']&.to_i
+        }
       }.sort_by { |p| p[:date] }
 
       today   = Date.today
@@ -418,15 +434,17 @@ class MarketDataService
 
     def try_providers(symbol)
       providers = [
-        [:fetch_from_tiingo_quote,  'Tiingo'],
-        [:fetch_from_alpha_vantage, 'Alpha Vantage'],
-        [:fetch_from_finnhub,       'Finnhub'],
-        [:fetch_from_yahoo,         'Yahoo Finance']
+        [:fetch_from_tiingo_quote,  'Tiingo',        'tiingo_quote'],
+        [:fetch_from_alpha_vantage, 'Alpha Vantage', 'alpha_vantage_quote'],
+        [:fetch_from_finnhub,       'Finnhub',       'finnhub_quote'],
+        [:fetch_from_yahoo,         'Yahoo Finance', 'yahoo_quote']
       ]
 
-      providers.each do |method_name, label|
+      providers.each do |method_name, label, slug|
         begin
-          result = send(method_name, symbol)
+          result = HealthRegistry.measure(slug, reason_on_nil: 'empty_or_rate_limited') do
+            send(method_name, symbol)
+          end
           return result if result && !result.empty?
           # nil means provider skipped/rate-limited; only warn on genuinely empty responses
           warn "[MarketDataService] #{label} returned empty for #{symbol} — trying next provider" if result == {} && !test_env?
@@ -571,25 +589,29 @@ class MarketDataService
         return @persistent_cache[key]
       end
 
-      url  = URI("https://finnhub.io/api/v1/stock/recommendation?symbol=#{symbol}&token=#{api_key}")
-      res  = Net::HTTP.get_response(url)
-      data = JSON.parse(res.body)
+      result = HealthRegistry.measure('finnhub_analyst', reason_on_nil: 'empty_response') do
+        url  = URI("https://finnhub.io/api/v1/stock/recommendation?symbol=#{symbol}&token=#{api_key}")
+        res  = Net::HTTP.get_response(url)
+        data = JSON.parse(res.body)
+        next nil unless data.is_a?(Array) && !data.empty?
 
-      unless data.is_a?(Array) && !data.empty?
-        return @persistent_cache[key]
+        latest = data.first
+        {
+          strong_buy:  latest['strongBuy'].to_i,
+          buy:         latest['buy'].to_i,
+          hold:        latest['hold'].to_i,
+          sell:        latest['sell'].to_i,
+          strong_sell: latest['strongSell'].to_i,
+          period:      latest['period']
+        }
       end
 
-      latest = data.first
-      result = {
-        strong_buy:  latest['strongBuy'].to_i,
-        buy:         latest['buy'].to_i,
-        hold:        latest['hold'].to_i,
-        sell:        latest['sell'].to_i,
-        strong_sell: latest['strongSell'].to_i,
-        period:      latest['period']
-      }
-      store_cache(key, result)
-      result
+      if result
+        store_cache(key, result)
+        result
+      else
+        @persistent_cache[key]
+      end
     rescue StandardError => e
       warn "[MarketDataService] Finnhub analyst fetch failed for #{symbol}: #{e.message}" unless test_env?
       @persistent_cache[key]
@@ -612,30 +634,34 @@ class MarketDataService
         return @persistent_cache[key]
       end
 
-      url  = URI("https://finnhub.io/api/v1/stock/profile2?symbol=#{symbol}&token=#{api_key}")
-      res  = Net::HTTP.get_response(url)
-      data = JSON.parse(res.body)
+      result = HealthRegistry.measure('finnhub_profile', reason_on_nil: 'empty_response') do
+        url  = URI("https://finnhub.io/api/v1/stock/profile2?symbol=#{symbol}&token=#{api_key}")
+        res  = Net::HTTP.get_response(url)
+        data = JSON.parse(res.body)
+        next nil unless data && !data.empty?
 
-      unless data && !data.empty?
-        return @persistent_cache[key]
+        {
+          name:          data['name'],
+          description:   data['description'] || "#{data['name']} (#{symbol})",
+          exchange:      data['exchange'],
+          industry:      data['finnhubIndustry'],
+          market_cap:    data['marketCapitalization'],
+          market_cap_currency: data['currency'],
+          ipo:           data['ipo'],
+          logo:          data['logo'],
+          weburl:        data['weburl'],
+          finnhub_type:  data['type'],
+          ticker:        symbol,
+          source: 'Finnhub'
+        }
       end
 
-      result = {
-        name:          data['name'],
-        description:   data['description'] || "#{data['name']} (#{symbol})",
-        exchange:      data['exchange'],
-        industry:      data['finnhubIndustry'],
-        market_cap:    data['marketCapitalization'],
-        market_cap_currency: data['currency'],
-        ipo:           data['ipo'],
-        logo:          data['logo'],
-        weburl:        data['weburl'],
-        finnhub_type:  data['type'],
-        ticker:        symbol,
-        source: 'Finnhub'
-      }
-      store_cache(key, result)
-      result
+      if result
+        store_cache(key, result)
+        result
+      else
+        @persistent_cache[key]
+      end
     rescue StandardError => e
       warn "[MarketDataService] Finnhub profile fetch failed for #{symbol}: #{e.message}" unless test_env?
       @persistent_cache[key]
@@ -656,11 +682,11 @@ class MarketDataService
       range_cfg = YAHOO_RANGE_MAP[period] || YAHOO_RANGE_MAP['1y']
       # Yahoo primary (has intraday for 1d); FMP is the most reliable free-tier
       # daily source for US-listed symbols; then Finnhub, Tiingo, Alpha Vantage.
-      result = fetch_historical_from_yahoo(symbol, range_cfg) ||
-               fetch_historical_from_fmp(symbol, period) ||
-               fetch_historical_from_finnhub(symbol, period) ||
-               fetch_historical_from_tiingo(symbol, period) ||
-               fetch_historical_from_alpha_vantage(symbol, period)
+      result = HealthRegistry.measure('yahoo_chart',     reason_on_nil: 'empty_or_rate_limited') { fetch_historical_from_yahoo(symbol, range_cfg) } ||
+               HealthRegistry.measure('fmp_history',     reason_on_nil: 'empty_or_rate_limited') { fetch_historical_from_fmp(symbol, period) } ||
+               HealthRegistry.measure('finnhub_candle',  reason_on_nil: 'empty_or_rate_limited') { fetch_historical_from_finnhub(symbol, period) } ||
+               HealthRegistry.measure('tiingo_history',  reason_on_nil: 'empty_or_rate_limited') { fetch_historical_from_tiingo(symbol, period) } ||
+               HealthRegistry.measure('alpha_vantage_weekly', reason_on_nil: 'empty_or_rate_limited') { fetch_historical_from_alpha_vantage(symbol, period) }
 
       if result
         store_cache(key, result)
@@ -719,7 +745,15 @@ class MarketDataService
         date  = row['date']&.slice(0, 10)
         close = row['close'] || row['adjClose']
         next unless date && close
-        { date: date, close: close.to_f.round(2) }
+        {
+          date:      date,
+          open:      (row['open']   || row['adjOpen'])&.to_f&.round(2),
+          high:      (row['high']   || row['adjHigh'])&.to_f&.round(2),
+          low:       (row['low']    || row['adjLow'])&.to_f&.round(2),
+          close:     close.to_f.round(2),
+          adj_close: row['adjClose']&.to_f&.round(4),
+          volume:    (row['volume'] || row['adjVolume'])&.to_i
+        }
       end.sort_by { |p| p[:date] }
 
       points.empty? ? nil : points
@@ -814,10 +848,23 @@ class MarketDataService
       closes     = result.dig('indicators', 'quote', 0, 'close') || []
       adjcloses  = result.dig('indicators', 'adjclose', 0, 'adjclose') || []
 
+      opens   = result.dig('indicators', 'quote', 0, 'open')   || []
+      highs   = result.dig('indicators', 'quote', 0, 'high')   || []
+      lows    = result.dig('indicators', 'quote', 0, 'low')    || []
+      volumes = result.dig('indicators', 'quote', 0, 'volume') || []
+
       points = timestamps.each_with_index.filter_map do |ts, idx|
         close = closes[idx] || adjcloses[idx]
         next unless ts && close
-        { date: Time.at(ts).utc.strftime('%Y-%m-%d'), close: close.to_f.round(2) }
+        {
+          date:      Time.at(ts).utc.strftime('%Y-%m-%d'),
+          open:      opens[idx]&.to_f&.round(2),
+          high:      highs[idx]&.to_f&.round(2),
+          low:       lows[idx]&.to_f&.round(2),
+          close:     close.to_f.round(2),
+          adj_close: adjcloses[idx]&.to_f&.round(4),
+          volume:    volumes[idx]&.to_i
+        }
       end
 
       points.empty? ? nil : points
@@ -848,12 +895,23 @@ class MarketDataService
       data = JSON.parse(res.body)
       return nil unless data['s'] == 'ok'
 
-      closes = data['c'] || []
-      times  = data['t'] || []
+      closes  = data['c'] || []
+      opens   = data['o'] || []
+      highs   = data['h'] || []
+      lows    = data['l'] || []
+      volumes = data['v'] || []
+      times   = data['t'] || []
       points = times.each_with_index.filter_map do |ts, idx|
         close = closes[idx]
         next unless ts && close
-        { date: Time.at(ts).utc.strftime('%Y-%m-%d'), close: close.to_f.round(2) }
+        {
+          date:   Time.at(ts).utc.strftime('%Y-%m-%d'),
+          open:   opens[idx]&.to_f&.round(2),
+          high:   highs[idx]&.to_f&.round(2),
+          low:    lows[idx]&.to_f&.round(2),
+          close:  close.to_f.round(2),
+          volume: volumes[idx]&.to_i
+        }
       end
 
       points.empty? ? nil : points
@@ -862,9 +920,9 @@ class MarketDataService
       nil
     end
 
-    # FMP free-tier historical. Returns [{date:, close:}] sorted oldest→newest
-    # for the requested period window, or nil if the API declines.
-    # Uses /historical-price-eod/light (compact: date + price only).
+    # FMP free-tier historical. Returns [{date:, open:, high:, low:, close:, volume:}]
+    # sorted oldest→newest for the requested period window, or nil on failure.
+    # Uses /historical-price-eod/full for OHLCV.
     def fetch_historical_from_fmp(symbol, period)
       all_points = fetch_fmp_historical_full(symbol)
       return nil if all_points.nil? || all_points.empty?
@@ -893,7 +951,7 @@ class MarketDataService
       api_key = ENV['FMP_API_KEY']
       return nil unless api_key && !api_key.empty?
 
-      url = URI("https://financialmodelingprep.com/stable/historical-price-eod/light" \
+      url = URI("https://financialmodelingprep.com/stable/historical-price-eod/full" \
                 "?symbol=#{symbol}&apikey=#{api_key}")
       res = Net::HTTP.get_response(url)
       unless res.is_a?(Net::HTTPSuccess)
@@ -906,9 +964,17 @@ class MarketDataService
 
       data.filter_map do |row|
         date  = row['date']
-        close = row['price'] || row['close']
+        close = row['close'] || row['price']
         next unless date && close
-        { date: date.slice(0, 10), close: close.to_f.round(2) }
+        {
+          date:      date.slice(0, 10),
+          open:      row['open']&.to_f&.round(2),
+          high:      row['high']&.to_f&.round(2),
+          low:       row['low']&.to_f&.round(2),
+          close:     close.to_f.round(2),
+          adj_close: row['adjClose']&.to_f&.round(4),
+          volume:    row['volume']&.to_i
+        }
       end.sort_by { |p| p[:date] }
     rescue StandardError => e
       warn "[MarketDataService] FMP historical fetch failed for #{symbol}: #{e.message}" unless test_env?
@@ -929,7 +995,14 @@ class MarketDataService
 
       # series is a Hash { "YYYY-MM-DD" => { "4. close" => "...", ... } }, newest first
       all_points = series.map do |date, vals|
-        { date: date, close: vals['4. close'].to_f.round(2) }
+        {
+          date:   date,
+          open:   vals['1. open']&.to_f&.round(2),
+          high:   vals['2. high']&.to_f&.round(2),
+          low:    vals['3. low']&.to_f&.round(2),
+          close:  vals['4. close'].to_f.round(2),
+          volume: vals['5. volume']&.to_i
+        }
       end.sort_by { |p| p[:date] }
 
       # Slice by period
