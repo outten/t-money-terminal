@@ -1,0 +1,80 @@
+<div class="page-header">
+  <div>
+    <h2>Correlations</h2>
+    <p class="subtitle">Pairwise daily-return correlation across up to <%= TMoneyTerminal::CORRELATION_MAX_SYMBOLS %> symbols. Computed on dividend-adjusted closes when available.</p>
+  </div>
+</div>
+
+<section class="analysis-section">
+  <h3>Selection</h3>
+  <form method="GET" action="/correlations" class="compare-form">
+    <label>
+      <span class="field-label">Symbols (comma-separated)</span>
+      <input type="text" name="symbols" value="<%= (@symbols || []).join(',') %>"
+             placeholder="SPY,QQQ,AAPL,MSFT,GOOGL,JPM" autocomplete="off" spellcheck="false">
+    </label>
+    <label>
+      <span class="field-label">Period</span>
+      <select name="period">
+        <% TMoneyTerminal::CORRELATION_VALID_PERIODS.each do |p| %>
+        <option value="<%= p %>" <%= @period == p ? 'selected' : '' %>><%= p.upcase %></option>
+        <% end %>
+      </select>
+    </label>
+    <button type="submit" class="refresh-btn">Compute</button>
+  </form>
+  <p class="data-source">
+    Green = positive correlation (move together). Red = negative (diversifying). White ≈ 0 (no linear relationship).
+    Diagonal is always 1.0. Cells default to nil ("—") when the two symbols don't share at least 2 common dates over the period.
+  </p>
+</section>
+
+<% if @symbols && @symbols.length >= 2 && @payload %>
+<section class="analysis-section">
+  <h3>
+    <%= @symbols.join(' · ') %>
+    <small class="muted">— <%= @period.upcase %></small>
+  </h3>
+  <div class="corr-heatmap-wrap">
+    <table class="corr-heatmap" aria-label="Pairwise correlation heatmap">
+      <thead>
+        <tr>
+          <th class="corr-corner" scope="col"></th>
+          <% @payload['symbols'].each do |sym| %>
+            <th class="corr-col-label" scope="col"><%= sym %></th>
+          <% end %>
+        </tr>
+      </thead>
+      <tbody>
+        <% @payload['symbols'].each_with_index do |row_sym, i| %>
+          <tr>
+            <th class="corr-row-label" scope="row"><%= row_sym %></th>
+            <% @payload['matrix'][i].each_with_index do |v, j| %>
+              <% bg = correlation_color(v) %>
+              <td class="corr-cell"
+                  style="background:<%= bg %>; color:<%= correlation_text_color(bg) %>"
+                  title="<%= row_sym %> vs <%= @payload['symbols'][j] %>: <%= v.nil? ? '—' : format('%.4f', v) %>">
+                <%= v.nil? ? '—' : format('%.2f', v) %>
+              </td>
+            <% end %>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="corr-legend">
+    <span class="corr-legend-label">−1</span>
+    <% (-10..10).each do |i| %>
+      <% bg = correlation_color(i / 10.0) %>
+      <span class="corr-legend-swatch" style="background:<%= bg %>"></span>
+    <% end %>
+    <span class="corr-legend-label">+1</span>
+    <span class="corr-legend-tip muted">Hover a cell for the full correlation value.</span>
+  </div>
+</section>
+<% else %>
+<section class="analysis-section">
+  <p class="no-data">Enter at least two known symbols above to compute pairwise correlations.</p>
+</section>
+<% end %>

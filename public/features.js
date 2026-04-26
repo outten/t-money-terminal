@@ -22,10 +22,10 @@
     function hide() { results.hidden = true; highlighted = -1; }
     function show() { if (items.length) results.hidden = false; }
 
-    function render(list) {
+    function render(list, payload) {
       items = list || [];
       results.innerHTML = '';
-      if (!items.length) { hide(); return; }
+
       items.forEach(function (row, idx) {
         const li = document.createElement('li');
         li.className = 'search-result-item';
@@ -42,7 +42,54 @@
         li.addEventListener('mouseenter', function () { setHighlight(idx); });
         results.appendChild(li);
       });
+
+      // No matches but the query looks like a ticker → offer to discover it.
+      // Adds a synthetic "Discover XYZ" item that POSTs to /api/symbols/discover
+      // and routes to /analysis/XYZ on success.
+      if (payload && payload.can_discover) {
+        const li = document.createElement('li');
+        li.className = 'search-result-item search-discover';
+        li.innerHTML =
+          '<span class="sr-symbol">' + payload.query + '</span>' +
+          '<span class="sr-name">Look up this ticker…</span>' +
+          '<span class="sr-region">discover</span>';
+        li.addEventListener('mousedown', function (e) {
+          e.preventDefault();
+          discover(payload.query, li);
+        });
+        results.appendChild(li);
+        items = items.concat([{ symbol: payload.query, name: payload.query, region: 'discover', _discover: true }]);
+      }
+
+      if (!results.children.length) { hide(); return; }
       show();
+    }
+
+    function discover(symbol, liEl) {
+      if (liEl) liEl.classList.add('loading');
+      fetch('/api/symbols/discover', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol: symbol })
+      })
+        .then(function (r) {
+          return r.json().then(function (body) { return { ok: r.ok, body: body }; });
+        })
+        .then(function (resp) {
+          if (resp.ok && resp.body && resp.body.symbol) {
+            go(resp.body.symbol);
+          } else {
+            if (liEl) {
+              liEl.classList.remove('loading');
+              liEl.classList.add('error');
+              liEl.querySelector('.sr-name').textContent =
+                (resp.body && resp.body.error) ? resp.body.error : 'Could not find that ticker.';
+            }
+          }
+        })
+        .catch(function () {
+          if (liEl) { liEl.classList.remove('loading'); liEl.classList.add('error'); }
+        });
     }
 
     function setHighlight(idx) {
@@ -66,7 +113,7 @@
         .then(function (r) { return r.json(); })
         .then(function (payload) {
           if (mine !== currentRequest) return; // stale response
-          render(payload.results || []);
+          render(payload.results || [], payload);
         })
         .catch(function () { /* swallow */ });
     }
@@ -83,7 +130,13 @@
       else if (e.key === 'Enter')     {
         e.preventDefault();
         const pick = highlighted >= 0 ? items[highlighted] : items[0];
-        if (pick) go(pick.symbol);
+        if (!pick) return;
+        if (pick._discover) {
+          const lis = results.querySelectorAll('.search-result-item');
+          discover(pick.symbol, lis[lis.length - 1]);
+        } else {
+          go(pick.symbol);
+        }
       }
       else if (e.key === 'Escape')    { hide(); input.blur(); }
     });
@@ -261,6 +314,7 @@
   }
 
   // ---- Boot ---------------------------------------------------------------
+  // (The correlation heatmap is server-rendered as an HTML table — no JS needed.)
   window.addEventListener('DOMContentLoaded', function () {
     initSymbolSearch();
     initWatchlistButton();

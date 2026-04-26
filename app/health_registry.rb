@@ -115,6 +115,18 @@ module HealthRegistry
     MUTEX.synchronize { @observations.clear }
   end
 
+  # Providers whose recent success rate has dropped below `threshold`. Only
+  # reports providers with at least `min_observations` samples so the banner
+  # doesn't fire on the very first call out the gate. Used by the dashboard
+  # degradation banner.
+  def degraded(threshold: 0.5, min_observations: 5)
+    summary.select do |row|
+      row[:total] >= min_observations &&
+        row[:success_rate] &&
+        row[:success_rate] < threshold
+    end
+  end
+
   def disabled?
     return false if ENV['HEALTH_REGISTRY'] == '1'
     ENV['RACK_ENV'] == 'test'

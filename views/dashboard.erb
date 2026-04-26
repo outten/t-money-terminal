@@ -1,3 +1,16 @@
+<% if @degraded_providers && @degraded_providers.any? %>
+<div class="degradation-banner" role="alert">
+  <span class="banner-icon">&#9888;</span>
+  <strong>Provider degradation:</strong>
+  <%= @degraded_providers.map { |p| "#{p[:provider]} (#{(p[:success_rate] * 100).round}% over last #{p[:total]})" }.join(', ') %>.
+  Quotes and historical data may be stale.
+  <a href="/admin/health" class="banner-link">Health details</a> &middot;
+  <form method="POST" action="/refresh/dashboard" style="display:inline">
+    <button type="submit" class="banner-link link-btn">Retry</button>
+  </form>
+</div>
+<% end %>
+
 <div class="page-header">
   <div>
     <h2>Dashboard</h2>

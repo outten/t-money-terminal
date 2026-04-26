@@ -1,19 +1,26 @@
 require 'set'
+require 'json'
+require 'fileutils'
+require 'time'
 require_relative 'market_data_service'
 
 # SymbolIndex — the universe of tickers the app knows about.
 #
+# Two layers:
+#   1. CURATED + REGIONS — baked-in list (~55 symbols) that ships with the app.
+#   2. Runtime extensions persisted to `data/symbols_extended.json` — symbols
+#      the user discovered via search. Format:
+#        [{ symbol:, name:, region:, source:, added_at: }, ...]
+#
 # Used by:
 #   • `/api/symbols` — feeds the top-nav search box with {symbol, name, region}
-#   • `TMoneyTerminal::VALID_SYMBOLS` — whitelist for /analysis/:symbol and /api
+#   • `SymbolIndex.known?(symbol)` — whitelist for /analysis/:symbol and /api
 #
-# Sourced from MarketDataService::REGIONS + a curated list of large-cap US
-# names so the search box is useful without depending on a third-party API.
-# The list can be extended freely — as long as a symbol is quotable by Tiingo,
-# Alpha Vantage, Finnhub, or Yahoo the waterfall in MarketDataService will
-# resolve it.
+# Symbols are added via `SymbolIndex.add_extension(...)` (call-site validates
+# whatever it likes; the index just persists). The discovery flow lives in
+# `app/main.rb` route `POST /api/symbols/discover`, which calls
+# `MarketDataService.quote(symbol)` and only persists on a successful quote.
 module SymbolIndex
-  # Curated extras beyond what REGIONS provides. Format: [symbol, name, region].
   CURATED = [
     # US large-caps
     ['TSLA',  'Tesla, Inc.',                    'US'],
@@ -61,7 +68,6 @@ module SymbolIndex
     ['XLE',   'Energy Select Sector SPDR',      'US']
   ].freeze
 
-  # Names for the symbols that already live in MarketDataService::REGIONS.
   REGION_SYMBOL_NAMES = {
     'SPY'   => 'SPDR S&P 500 ETF',
     'QQQ'   => 'Invesco QQQ Trust',
@@ -86,32 +92,47 @@ module SymbolIndex
     europe: 'Europe'
   }.freeze
 
+  DEFAULT_EXTENSIONS_PATH = File.expand_path('../../data/symbols_extended.json', __FILE__)
+  MUTEX = Mutex.new
+
+  # Symbols matching this pattern are eligible for discovery (US tickers + ETFs
+  # + share classes). Avoids accepting random user input as a ticker.
+  TICKER_PATTERN = /\A[A-Z][A-Z0-9.\-]{0,9}\z/.freeze
+
   module_function
 
-  # Combined list of [symbol, name, region] covering REGIONS + CURATED.
-  # CURATED entries win if they duplicate (shouldn't happen in practice).
+  def extensions_path
+    ENV['SYMBOLS_EXTENDED_PATH'] || DEFAULT_EXTENSIONS_PATH
+  end
+
+  # Returns the persisted extension list as [[symbol, name, region], ...]
+  # so it can drop straight into `all`. Cached per-process; invalidated on add.
+  def extensions
+    @extensions ||= load_extensions
+  end
+
+  # Combined list of [symbol, name, region] covering REGIONS + CURATED + extensions.
+  # Curated and extensions both win over REGIONS on duplicate symbols.
   def all
     @all ||= begin
       region_rows = MarketDataService::REGIONS.flat_map do |rkey, symbols|
         region = REGION_FOR_REGION_KEY[rkey] || rkey.to_s
         symbols.map { |s| [s, REGION_SYMBOL_NAMES[s] || s, region] }
       end
-      (region_rows + CURATED).uniq { |row| row[0] }
+      # Order matters for `uniq` — extensions and curated should override region
+      # rows if a duplicate ever appears.
+      (region_rows + CURATED + extensions).uniq { |row| row[0] }
     end
   end
 
-  # Flat array of every symbol the search bar can jump to.
   def symbols
-    @symbols ||= all.map(&:first).freeze
+    @symbols ||= all.map(&:first)
   end
 
-  # `[{symbol:, name:, region:}, ...]` JSON-friendly shape for /api/symbols.
   def to_a
     all.map { |s, n, r| { symbol: s, name: n, region: r } }
   end
 
-  # Case-insensitive prefix + substring search across symbol and name, ranked:
-  #   1) exact symbol match    2) symbol prefix    3) name prefix    4) substring
   def search(query, limit: 10)
     q = query.to_s.strip.upcase
     return [] if q.empty?
@@ -137,13 +158,93 @@ module SymbolIndex
           .map { |_score, symbol, name, region| { symbol: symbol, name: name, region: region } }
   end
 
-  # O(1) membership check for VALID_SYMBOLS.
   def known?(symbol)
     symbol_set.include?(symbol.to_s.upcase)
+  end
+
+  # Loose validity check for "things a user might want to discover as a ticker"
+  # — used to early-reject obvious garbage before hitting any provider.
+  def looks_like_ticker?(query)
+    s = query.to_s.strip.upcase
+    !s.empty? && TICKER_PATTERN.match?(s)
+  end
+
+  # Append `symbol` to the runtime extension store and invalidate caches so
+  # subsequent search/known? calls see it. Returns the merged extension hash.
+  # No-op + returns the existing entry if the symbol is already known.
+  def add_extension(symbol, name: nil, region: nil, source: nil)
+    sym = symbol.to_s.strip.upcase
+    raise ArgumentError, 'symbol required' if sym.empty?
+
+    MUTEX.synchronize do
+      list = read_extensions_unlocked
+      existing = list.find { |row| row[:symbol] == sym }
+      return existing if existing
+
+      entry = {
+        symbol:   sym,
+        name:     name.to_s.empty? ? sym : name.to_s,
+        region:   region.to_s.empty? ? 'Other' : region.to_s,
+        source:   source,
+        added_at: Time.now.utc.iso8601
+      }
+      list << entry
+      write_extensions_unlocked(list)
+      invalidate_caches!
+      entry
+    end
+  end
+
+  # Test helper — also clears the on-disk extension store. Production code
+  # never calls this.
+  def reset_extensions!
+    MUTEX.synchronize do
+      File.delete(extensions_path) if File.exist?(extensions_path)
+      invalidate_caches!
+    end
   end
 
   def symbol_set
     @symbol_set ||= symbols.to_set
   end
-end
 
+  # --- internals -----------------------------------------------------------
+
+  def invalidate_caches!
+    @extensions = nil
+    @all        = nil
+    @symbols    = nil
+    @symbol_set = nil
+  end
+
+  def load_extensions
+    raw = File.exist?(extensions_path) ? File.read(extensions_path) : nil
+    return [] unless raw && !raw.strip.empty?
+    parsed = JSON.parse(raw)
+    return [] unless parsed.is_a?(Array)
+    parsed.filter_map do |row|
+      next unless row.is_a?(Hash) && row['symbol']
+      [row['symbol'].to_s.upcase, row['name'].to_s, row['region'].to_s]
+    end
+  rescue JSON::ParserError
+    []
+  end
+
+  def read_extensions_unlocked
+    return [] unless File.exist?(extensions_path)
+    raw = File.read(extensions_path)
+    return [] if raw.strip.empty?
+    parsed = JSON.parse(raw)
+    return [] unless parsed.is_a?(Array)
+    parsed.map { |h| h.transform_keys(&:to_sym) }
+  rescue JSON::ParserError
+    []
+  end
+
+  def write_extensions_unlocked(list)
+    FileUtils.mkdir_p(File.dirname(extensions_path))
+    tmp = "#{extensions_path}.tmp"
+    File.write(tmp, JSON.pretty_generate(list))
+    File.rename(tmp, extensions_path)
+  end
+end

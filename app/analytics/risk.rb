@@ -119,6 +119,45 @@ module Analytics
       cov / var_b
     end
 
+    # Build a square correlation matrix from a hash of {symbol => bars[]}.
+    # `field: :adj_close` (the default) prefers dividend-adjusted closes —
+    # correlation of total returns is the right interpretation for any holding
+    # that pays dividends. Diagonal is 1.0; off-diagonal cells are computed
+    # by aligning the two series on common dates.
+    #
+    # Returns:
+    #   { symbols: [...sorted symbol order...],
+    #     matrix:  [[Float|nil, ...], ...],     # nil when alignment yielded < 2 points
+    #     period:  whatever was passed in }
+    #
+    # Order is the iteration order of `series_by_symbol` so callers can pass an
+    # ordered hash to control axis labelling.
+    def correlation_matrix(series_by_symbol, field: :adj_close)
+      symbols = series_by_symbol.keys
+      n       = symbols.length
+      matrix  = Array.new(n) { Array.new(n) }
+
+      symbols.each_with_index do |sym_a, i|
+        bars_a = series_by_symbol[sym_a] || []
+        symbols.each_with_index do |sym_b, j|
+          if i == j
+            matrix[i][j] = 1.0
+            next
+          end
+          # Use the upper triangle to avoid recomputing the symmetric pair.
+          if j < i
+            matrix[i][j] = matrix[j][i]
+            next
+          end
+          bars_b = series_by_symbol[sym_b] || []
+          a, b   = align_on_dates(bars_a, bars_b, field: field)
+          matrix[i][j] = a.length >= 2 ? correlation(a, b) : nil
+        end
+      end
+
+      { symbols: symbols, matrix: matrix }
+    end
+
     # Pearson correlation of daily returns (-1..1).
     def correlation(a, b)
       ra = returns(a); rb = returns(b)

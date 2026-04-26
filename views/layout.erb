@@ -15,6 +15,7 @@
       <a href="/region/japan" class="<%= %w[/japan /region/japan].include?(request.path_info) ? 'active' : '' %>">Japan</a>
       <a href="/region/europe" class="<%= %w[/europe /region/europe].include?(request.path_info) ? 'active' : '' %>">Europe</a>
       <a href="/compare" class="<%= request.path_info == '/compare' ? 'active' : '' %>">Compare</a>
+      <a href="/correlations" class="<%= request.path_info == '/correlations' ? 'active' : '' %>">Correlations</a>
       <a href="/portfolio" class="<%= request.path_info == '/portfolio' ? 'active' : '' %>">Portfolio</a>
     </nav>
     <div class="search-box" role="search">

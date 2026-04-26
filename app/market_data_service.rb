@@ -8,6 +8,7 @@ require 'json'
 require 'time'
 require 'fileutils'
 require_relative 'health_registry'
+require_relative 'providers'
 
 class MarketDataService
   CACHE_TTL  = 3600 # 1 hour
@@ -252,6 +253,49 @@ class MarketDataService
           results = {}
           cutoffs.each do |period, cutoff|
             points = fmp_points.select { |p| Date.parse(p[:date]) >= cutoff }
+            if points.any?
+              store_cache("candle:#{symbol}:#{period}", points)
+              results[period] = points
+            else
+              results[period] = nil
+            end
+          end
+          return results if results.values.any?
+        end
+      end
+
+      # Polygon free tier — universal coverage of US tickers, including ones
+      # FMP paywalls (CMCSA, BRK.B, smaller-caps). 2-year window cap per call,
+      # so we slice all periods <= 2y from a single fetch.
+      if ENV['POLYGON_API_KEY'] && !ENV['POLYGON_API_KEY'].empty?
+        today    = Date.today
+        from     = (today - (366 * 2)).to_s
+        polygon_raw = Providers::PolygonService.daily_aggregates(symbol, from: from, to: today.to_s)
+        if polygon_raw.is_a?(Array) && !polygon_raw.empty?
+          polygon_points = polygon_raw.map do |bar|
+            close = bar['close'].to_f
+            {
+              date:      bar['date'],
+              open:      bar['open']&.to_f&.round(2),
+              high:      bar['high']&.to_f&.round(2),
+              low:       bar['low']&.to_f&.round(2),
+              close:     close.round(2),
+              adj_close: close.round(4),
+              volume:    bar['volume']&.to_i
+            }
+          end.sort_by { |p| p[:date] }
+
+          cutoffs = {
+            '1d'  => today - 1,
+            '1m'  => today - 30,
+            '3m'  => today - 90,
+            'ytd' => Date.new(today.year, 1, 1),
+            '1y'  => today - 365,
+            '5y'  => today - (5 * 365)
+          }
+          results = {}
+          cutoffs.each do |period, cutoff|
+            points = polygon_points.select { |p| Date.parse(p[:date]) >= cutoff }
             if points.any?
               store_cache("candle:#{symbol}:#{period}", points)
               results[period] = points
@@ -680,10 +724,12 @@ class MarketDataService
       end
 
       range_cfg = YAHOO_RANGE_MAP[period] || YAHOO_RANGE_MAP['1y']
-      # Yahoo primary (has intraday for 1d); FMP is the most reliable free-tier
-      # daily source for US-listed symbols; then Finnhub, Tiingo, Alpha Vantage.
+      # Provider waterfall, ordered by reliability for the typical free-tier
+      # setup. Polygon sits high because it works universally for US tickers
+      # (FMP free 402s on many less-covered symbols, Yahoo throttles by IP).
       result = HealthRegistry.measure('yahoo_chart',     reason_on_nil: 'empty_or_rate_limited') { fetch_historical_from_yahoo(symbol, range_cfg) } ||
                HealthRegistry.measure('fmp_history',     reason_on_nil: 'empty_or_rate_limited') { fetch_historical_from_fmp(symbol, period) } ||
+               HealthRegistry.measure('polygon_history', reason_on_nil: 'empty_or_rate_limited') { fetch_historical_from_polygon(symbol, period) } ||
                HealthRegistry.measure('finnhub_candle',  reason_on_nil: 'empty_or_rate_limited') { fetch_historical_from_finnhub(symbol, period) } ||
                HealthRegistry.measure('tiingo_history',  reason_on_nil: 'empty_or_rate_limited') { fetch_historical_from_tiingo(symbol, period) } ||
                HealthRegistry.measure('alpha_vantage_weekly', reason_on_nil: 'empty_or_rate_limited') { fetch_historical_from_alpha_vantage(symbol, period) }
@@ -917,6 +963,42 @@ class MarketDataService
       points.empty? ? nil : points
     rescue StandardError => e
       warn "[MarketDataService] Finnhub historical fetch failed for #{symbol}: #{e.message}" unless test_env?
+      nil
+    end
+
+    # Polygon.io free tier — daily aggregates for the underlying. Adjusted
+    # OHLCV (`adjusted: true` flag in PolygonService) so close ≈ adj_close;
+    # we populate both. Free tier provides up to 2 years of history. For 5y
+    # we return whatever is available — usually the trailing 24 months.
+    def fetch_historical_from_polygon(symbol, period)
+      today = Date.today
+      from = case period
+             when '1d'  then (today - 7).to_s
+             when '1m'  then (today - 31).to_s
+             when '3m'  then (today - 92).to_s
+             when 'ytd' then Date.new(today.year, 1, 1).to_s
+             when '1y'  then (today - 366).to_s
+             when '5y'  then (today - 366 * 2).to_s # free tier caps at ~2y
+             else            (today - 366).to_s
+             end
+
+      raw = Providers::PolygonService.daily_aggregates(symbol, from: from, to: today.to_s)
+      return nil if raw.nil? || raw.empty?
+
+      raw.map do |bar|
+        close = bar['close'].to_f
+        {
+          date:      bar['date'],
+          open:      bar['open']&.to_f&.round(2),
+          high:      bar['high']&.to_f&.round(2),
+          low:       bar['low']&.to_f&.round(2),
+          close:     close.round(2),
+          adj_close: close.round(4), # Polygon returns adjusted closes by default
+          volume:    bar['volume']&.to_i
+        }
+      end
+    rescue StandardError => e
+      warn "[MarketDataService] Polygon historical fetch failed for #{symbol}: #{e.message}" unless test_env?
       nil
     end
 

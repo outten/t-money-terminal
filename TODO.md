@@ -1,10 +1,9 @@
-# TODO — T Money Terminal Enhancement Roadmap
-
-Prioritized list of enhancements to make the terminal meaningfully more useful to an investor. Each item includes **what**, **why**, and — where relevant — **how to sign up** and **integration notes**.
+# TODO — T Money Terminal Roadmap
 
 **Scope constraints**
-- Free APIs only. Rate limits must be handled in code (caching + throttled refresh, as already established in [app/market_data_service.rb](app/market_data_service.rb) and [scripts/refresh_cache.rb](scripts/refresh_cache.rb)).
-- Reuse the hierarchical disk cache under `data/cache/` (TTL: 1 hour). Any new data category gets its own subdirectory (e.g. `data/cache/fundamentals/`, `data/cache/options/`, `data/cache/news/`).
+- Free APIs only. Rate limits are absorbed by code (caching + throttling — see [app/market_data_service.rb](app/market_data_service.rb), [app/providers/cache_store.rb](app/providers/cache_store.rb)).
+- New data categories get their own `data/cache/<namespace>/` subdirectory.
+- Single-user, file-backed state (`data/portfolio.json`, `data/watchlist.json`, `data/alerts.json`). A multi-user rebuild moves to SQLite — out of scope.
 
 **Legend** — **[P0]** core value · **[P1]** high ROI · **[P2]** nice-to-have · **[P3]** stretch.
 
@@ -12,110 +11,104 @@ Prioritized list of enhancements to make the terminal meaningfully more useful t
 
 ## Shipped
 
-Condensed status of the sections that are already live. Pointers are kept so future work can build on the same primitives.
+### Foundations (sections 1–4, complete)
 
-### §1 Data sources — all primary providers wired
-Every provider module lives under [app/providers/](app/providers/) and is loadable via `require_relative 'providers'` ([app/providers.rb](app/providers.rb)).
+- **§1 Data sources** — [app/providers/](app/providers/): FMP, Polygon, FRED, News (Finnhub + NewsAPI fallback), Stooq, EDGAR. Shared `CacheStore` + `Throttle` + `HttpClient`. Cache warm-up via `make refresh-providers` / `make refresh-all` / `make refresh-symbol`.
+- **§2 Analytics** — [app/analytics/](app/analytics/): indicators (SMA/EMA/MACD/RSI/Bollinger), risk (Sharpe/Sortino/max DD/VaR/beta/correlation), Black-Scholes (price + Greeks + IV bisection). DCF lives in `Providers::FmpService#dcf`.
+- **§3 Charting** — TradingView lightweight-charts; four synchronized panes (price + SMA/Bollinger overlays, volume, RSI w/ 30-70 lines, MACD line+signal+histogram). Crosshair readout, period toggle, log-scale toggle, palette swap.
+- **§4 Productivity** — search (~55 symbols, type-ahead), watchlist, price alerts UI, compare mode (rebased-to-100), CSV export.
 
-| § | Module | File | Cache namespace |
-|---|---|---|---|
-| 1.1 | `Providers::FmpService` | [fmp_service.rb](app/providers/fmp_service.rb) | `data/cache/fmp/` |
-| 1.2 | `Providers::PolygonService` | [polygon_service.rb](app/providers/polygon_service.rb) | `data/cache/polygon/` |
-| 1.3 | `Providers::FredService` | [fred_service.rb](app/providers/fred_service.rb) | `data/cache/fred/` |
-| 1.4 | `Providers::NewsService` | [news_service.rb](app/providers/news_service.rb) | `data/cache/news/` |
-| 1.6 | `Providers::StooqService` | [stooq_service.rb](app/providers/stooq_service.rb) | `data/cache/stooq/` |
-| 1.8 | `Providers::EdgarService` (thin) | [edgar_service.rb](app/providers/edgar_service.rb) | `data/cache/edgar/` |
+### Recently merged ([PR #1](https://github.com/outten/t-money-terminal/pull/1))
 
-Shared infra in [cache_store.rb](app/providers/cache_store.rb): `Providers::CacheStore` (hierarchical disk cache, TTL-based) and `Providers::Throttle` (thread-safe min-interval gate, no-op in test env). HTTP helper in [http_client.rb](app/providers/http_client.rb).
+- **Portfolio** — [app/portfolio_store.rb](app/portfolio_store.rb), `/portfolio`, position widget on `/analysis/:symbol` with cost basis and live unrealized P&L.
+- **Background scheduler** — [scripts/scheduler.rb](scripts/scheduler.rb) with `--tier=quotes|fundamentals|analyst|macro|alerts|all`, market-hours gate, [launchd plist example](scripts/launchd/com.tmoney.scheduler.quotes.plist).
+- **Alert notifications** — [app/notifiers.rb](app/notifiers.rb) supports webhook / ntfy / SMTP. Wired into `make check-alerts`.
+- **Provider health** — [app/health_registry.rb](app/health_registry.rb) (in-memory ring buffer) + `/admin/health` + `/api/admin/health.json`. Instrumented across `Providers::HttpClient` and the legacy `MarketDataService` waterfall.
+- **Dividend-adjusted total return** — `:adj_close` plumbed through Yahoo / Tiingo / FMP. Sharpe / Sortino / VaR / beta now compute on adjusted closes when available; indicators stay on raw close.
+- **Auto-reload dev loop** — [.rerun](.rerun) so `make run` restarts on source edits and ignores cache writes.
 
-FMP runs on the free `/stable/` endpoints (not paywalled `/api/v3/`). `next_earnings` uses the shared `/earnings-calendar` endpoint and filters in Ruby — one fetch serves every symbol.
-
-Cache warm-up: [scripts/refresh_providers.rb](scripts/refresh_providers.rb), `make refresh-providers`, `make refresh-all`, `make refresh-symbol SYMBOL=…`.
-
-### §2 Analytics — indicators, risk, Black-Scholes
-Pure-Ruby modules under [app/analytics/](app/analytics/), aggregated via [app/analytics.rb](app/analytics.rb):
-
-| § | Module | File |
-|---|---|---|
-| 2.1 | `Analytics::Indicators` — SMA, EMA, MACD, RSI (Wilder), Bollinger Bands | [indicators.rb](app/analytics/indicators.rb) |
-| 2.2 | `Analytics::Risk` — returns, CAGR, ann. vol, Sharpe, Sortino, max DD, VaR (historical + parametric), beta, correlation, date alignment | [risk.rb](app/analytics/risk.rb) |
-| 2.3 | `Analytics::BlackScholes` — European price, full Greeks, implied vol (bisection), historical vol | [black_scholes.rb](app/analytics/black_scholes.rb) |
-
-Wired into [views/analysis.erb](views/analysis.erb): Technical Indicators table, Risk & Performance table (uses FRED 3-Mo treasury as `rf`), and an ATM 30-day Black-Scholes illustration using realised vol. §2.5 DCF is live via `Providers::FmpService#dcf`.
-
-### §3 Charting — candles, overlays, oscillator panes
-TradingView lightweight-charts (CDN, 45 KB, MIT). Four synchronized panes: price (candles + SMA 20/50/200 + Bollinger 20/2σ), volume histogram coloured by candle direction, RSI(14) with 30/70 reference lines, MACD(12/26/9) line + signal + coloured histogram. OHLCV flows end-to-end through [app/market_data_service.rb](app/market_data_service.rb) for every provider. `/api/candle/:symbol/:period` returns `{ bars, indicators }` with indicators computed server-side via `Analytics::Indicators`. UX: crosshair readout pill, legend with swatches, period toggle (1d / 1m / 3m / YTD / 1y / 5y), log-scale toggle, ResizeObserver for responsive width, palette auto-swap.
-
-Dashboard additions: Macro Snapshot (Fed Funds, 3-Mo / 10-Yr Treasury, CPI, Unemployment, VIX — FRED) and International Indices (Nikkei, DAX, FTSE, CAC, Hang Seng — Stooq). Analysis additions: Fundamentals & Ratios (FMP), DCF Valuation with margin of safety, Upcoming Earnings, Latest News (Finnhub → NewsAPI fallback). Fundamentals/DCF are suppressed for ETFs. Route handlers use a `safe_fetch` helper so any provider failure yields `nil` and the page still renders.
-
-### §4 UX / product features
-- **Search** — [symbol_index.rb](app/symbol_index.rb) provides the universe (every `REGIONS` ticker plus ~40 curated large-caps and sector ETFs). `GET /api/symbols` powers the top-nav autocomplete with ranked prefix/substring matching (exact-symbol → symbol-prefix → name-prefix → substring), keyboard navigation, mouse hover highlight. `TMoneyTerminal::VALID_SYMBOLS` is sourced from `SymbolIndex.symbols`.
-- **Watchlist** — [watchlist_store.rb](app/watchlist_store.rb) persists to `data/watchlist.json` (atomic write + mutex). `GET/POST/DELETE /api/watchlist` plus `POST /watchlist/remove` form-fallback. Dashboard "My Watchlist" table + `/analysis/:symbol` ☆/★ toggle.
-- **Earnings calendar** — Dashboard "Upcoming Earnings (Next 7 Days)" filtered against REGIONS ∪ curated ∪ watchlist. Gracefully hides if FMP is missing/throttled.
-- **Price alerts** — [alerts_store.rb](app/alerts_store.rb) persists to `data/alerts.json`. `GET/POST/DELETE /api/alerts` and an Alerts section on `/analysis/:symbol`. [scripts/check_alerts.rb](scripts/check_alerts.rb) + `make check-alerts` evaluates every active alert, flips `triggered_at` on crossing, and appends to `data/alerts_triggered.log`. Cron: `*/15 9-16 * * 1-5 cd … && make check-alerts`.
-- **CSV export** — `GET /api/export/:symbol/:period.csv` returns OHLCV + full indicator series (SMA 20/50/200, Bollinger, RSI, MACD triple). Button on `/analysis/:symbol`.
-- **Compare mode** — `/compare?symbols=AAPL,MSFT,GOOGL&period=1y`, rebased-to-100, Chart.js, up to 6 symbols. `GET /api/compare` returns server-computed rebased series.
-
-**Test suite** — 138/138 passing (`make test`): 26 in [spec/section4_spec.rb](spec/section4_spec.rb), 37 in [spec/analytics_spec.rb](spec/analytics_spec.rb), 20 in [spec/providers_spec.rb](spec/providers_spec.rb), plus app and services specs.
+**Tests:** 158 examples, 0 failures.
 
 ---
 
-## Open work
+## Open work — prioritized plan
 
-### §2.4 [P2] Monte Carlo simulation
-- GBM price paths (10k runs, 252-day horizon) using μ and σ from historicals.
-- Outputs: p10/p50/p90 terminal price fan chart, probability of hitting target price.
-- Render on `/analysis/:symbol` as an expandable section.
-- New file: `app/analytics/monte_carlo.rb`. Reuses cached historicals — zero API cost.
+### Tier 1 — high value, low cost (do these first)
 
-### §2.6 [P3] Portfolio tools (requires user-owned state)
-- User-defined portfolio (with weights) stored alongside the existing watchlist in `data/portfolio.json`.
-- Efficient frontier (Markowitz) across watchlist using `Analytics::Risk.correlation`.
-- Portfolio Sharpe and weights via mean-variance optimization.
-- Builds on §2.2 (already shipped) and the existing `WatchlistStore` pattern.
+#### A. Dynamic symbol universe [P0]
+- **Problem**: app is hard-capped to ~55 curated tickers. Searching anything else fails silently. Single biggest visible limitation.
+- **Plan**: when a search query has no `SymbolIndex` match, hit `MarketDataService.quote(query)` once. If a quote comes back, append to a runtime extension of `SymbolIndex` and persist to `data/symbols_extended.json` so it survives restarts. Add `name` lookup via `Providers::FmpService.profile` or Finnhub profile.
+- **Touches**: [app/symbol_index.rb](app/symbol_index.rb), `/api/symbols`, `VALID_SYMBOLS` callsites.
+- **Cost**: 1 day.
 
-### §3.5 [P2] Sector treemap for region pages
-- Treemap (sector-weighted) with colour = % change. lightweight-charts doesn't ship this — use d3.js or ECharts snippet.
-- New route `/sectors` or embedded panel on `/region/:name`. Needs sector classification; FMP `/profile` returns `sector`.
+#### B. Correlation heatmap [P1]
+- **Problem**: `Analytics::Risk.correlation` exists but isn't surfaced. Watchlist is a stack of independent rows; pairwise correlation is the most useful comparison view.
+- **Plan**: new `/correlations` page (or tab on `/compare`). `GET /api/correlations?symbols=…&period=1y` returns an N×N matrix. Render with a plain `<canvas>` (no new JS dep). Reuse the period toggle.
+- **Touches**: new view, new route, no new analytics code.
+- **Cost**: half a day.
 
-### §3.6 [P2] Correlation heatmap
-- Needs a new `/correlations` page (or tab on `/compare`) computing pairwise correlation across watchlist/region using `Analytics::Risk.correlation`.
-- Plain `<canvas>` + manual draw, no new dependency. Expose via `GET /api/correlations`.
+#### C. CSV export honors current chart period [P3]
+- **Problem**: button on `/analysis/:symbol` pins to `1y`. Should match the chart's active period.
+- **Plan**: read the period state from `historicalChartState`, append `?period=…` to the export URL, server side already supports every period.
+- **Cost**: 30 minutes.
 
-### §3.7 [P3] Options visualisations
-- Requires §1.2 (Polygon, already shipped) to source live chains.
-- Volatility smile / term structure plot.
-- Payoff diagram builder (long call, covered call, vertical spread, iron condor).
-- New route `/options/:symbol` with a chain table annotated with theoretical price (via `Analytics::BlackScholes`), IV, moneyness, and Δ/Γ curves.
+#### D. Surface provider degradation on the dashboard [P1]
+- **Problem**: `/admin/health` exists but nothing prompts the user to check it. If quotes are 429ing across the board, the user just sees stale data with no warning.
+- **Plan**: add a top-banner on the dashboard when any provider's success rate over the last 20 calls drops below 50%. One link to `/admin/health` and one to refresh.
+- **Touches**: [views/dashboard.erb](views/dashboard.erb), small helper in [app/main.rb](app/main.rb).
+- **Cost**: half a day.
 
-### §4.5 follow-up [P3] CSV export: honour current chart period
-- Today the button on `/analysis/:symbol` pins to `1y`. Wire it to the chart's active period state so the exported range matches what the user is looking at.
+### Tier 2 — high value, medium cost
 
-### §5.1 [P1] Refactor `MarketDataService`
-- Current file is ~940 LOC at [app/market_data_service.rb](app/market_data_service.rb). Split by provider (`providers/tiingo.rb`, `providers/alpha_vantage.rb`, `providers/finnhub.rb`, `providers/yahoo.rb`) following the pattern already established in [app/providers/](app/providers/).
-- Keep `MarketDataService` as the cache + waterfall orchestrator.
-- Should be mechanical given the existing provider-module template.
+#### E. Tax lots / lot-based portfolio [P1]
+- **Problem**: `PortfolioStore` allows one entry per symbol. Real investors buy AAPL in March, June, October — each lot has its own basis and holding period.
+- **Plan**: lot table — `{id, symbol, shares, cost_basis, acquired_at}`. Aggregated views (`/portfolio`, position widget) sum across lots and report **average cost** + **per-lot detail (expandable)**. FIFO matching gets bolted on with realized P&L (item F).
+- **Touches**: [app/portfolio_store.rb](app/portfolio_store.rb) becomes lot-aware; views show aggregated + drill-down.
+- **Cost**: 1–2 days.
 
-### §5.2 [P1] Background refresh scheduler
-- [scripts/refresh_cache.rb](scripts/refresh_cache.rb) exists for manual runs. Add a `scripts/scheduler.rb` loop (or a launchd plist / systemd unit example in docs) that refreshes tiered data on different cadences:
-  - Quotes: every 15 min during market hours.
-  - Fundamentals: daily 03:00 local.
-  - Analyst recs: weekly.
-  - Macro: daily.
-- Pair with the existing `make check-alerts` cron recipe.
+#### F. Realized P&L / trade history [P1]
+- **Problem**: when the user sells, P&L disappears. No record of "what did I actually make this year?"
+- **Plan**: a `/trades` page backed by `data/trades.json`. Adding a SELL closes lots FIFO, computes realized P&L, writes a trade record `{date, symbol, side, shares, price, realized_pl, lots_closed}`. Year-to-date totals on the dashboard.
+- **Depends on**: E (lot-based portfolio).
+- **Cost**: 1–2 days.
 
-### §5.3 [P2] Expanded test coverage
-- Analytics already have golden-value fixtures. Extend the same discipline to `MarketDataService` provider branches (cache hit, cache miss, fallback, throttled) once §5.1 splits the providers.
+#### G. Dashboard concurrent fetch [P2]
+- **Problem**: dashboard makes serial provider calls on cache miss — quote fan-out + macro + indices + earnings + watchlist quotes. First hit can be slow.
+- **Plan**: wrap the independent sections in `Thread.new`; rejoin before render. Each `safe_fetch` block is already isolated. Bound max threads to ~8 to avoid bursting any single provider.
+- **Touches**: dashboard route in [app/main.rb](app/main.rb).
+- **Cost**: 1 day.
 
-### §5.4 [P2] Provider health dashboard
-- Extend `/admin/cache` with per-provider success/failure counters from the last N calls (tiny metrics ring buffer in `MarketDataService`).
-- Would also benefit the scheduler in §5.2 (e.g. skip a provider that's been 429ing).
+#### H. Backtest framework — single-strategy MVP [P2]
+- **Problem**: for a "research tool," the most natural question — *"what would this strategy have done?"* — has no answer.
+- **Plan**: pure-Ruby walk-forward simulator that takes a buy/sell rule and a cached historical series, returns equity curve + ann. return + max DD + Sharpe. Start with one demo: RSI mean-reversion on SPY (`buy < 30`, `sell > 70`). Render equity curve + buy-and-hold comparison.
+- **Cost**: 2 days.
 
-### §1.7 [P2] CoinGecko — crypto scope
-- Deferred. No signup, 30 req/min free. Would require its own region (`:crypto`) and mock prices before wiring into the waterfall pattern.
+### Tier 3 — eventually, lower urgency
 
-### §1.5 [skip] Alpha Vantage Technical Indicators
-- Intentionally not added — indicators are computed locally from cached historicals (see §2.1). Keep AV as the quote fallback only to preserve the 25-req/day budget.
+#### I. News sentiment scoring [P2]
+- Lightweight per-headline score (VADER-style or keyword weighted), no LLM/API cost. Aggregate to a bullish/bearish gauge on `/analysis/:symbol`.
+- Pure Ruby in [app/analytics/](app/analytics/). 1 day.
+
+#### J. MarketDataService refactor [P2 — was P1]
+- 1,200-LOC file. Split per-provider modules along the [app/providers/](app/providers/) pattern. Pure tech debt — only do this if a feature forces the issue. 1–2 days.
+
+#### K. Efficient frontier (was §2.6) [P3]
+- Markowitz mean-variance optimization across portfolio holdings. Builds on `Analytics::Risk.correlation` + `PortfolioStore`. Academic interpretation cautions apply. 1–2 days.
+
+#### L. Sector treemap (was §3.5) [P3]
+- Treemap with sector-weighted color = % change. Needs sector classification (FMP `/profile`) and a new JS dep (d3 or echarts). Aesthetic value mostly. 1 day.
+
+---
+
+## Dropped
+
+Items removed from the roadmap. Recorded here so the choice is visible:
+
+- **§2.4 Monte Carlo simulation** — GBM fan charts have thin tails, no regime modelling. Looks impressive, financially misleading. Skip.
+- **§3.7 Options visualizations** — Polygon free tier is end-of-day only, which makes any options UX stale. Revisit only if a paid data source is in scope.
+- **§1.7 CoinGecko crypto** — out of scope unless the user explicitly wants crypto.
+- **§1.5 Alpha Vantage technical indicators** — local compute (§2.1, shipped) is the right answer; AV is a 25-req/day budget that's better spent on quote fallbacks.
+- **§5.3 expanded test coverage as a standalone task** — happens organically alongside features; not a planning unit.
 
 ---
 
@@ -134,6 +127,9 @@ FMP_API_KEY=...          # https://site.financialmodelingprep.com/developer/docs
 POLYGON_API_KEY=...      # https://polygon.io/                                    (5/min)
 FRED_API_KEY=...         # https://fred.stlouisfed.org/docs/api/api_key.html      (unlimited)
 NEWSAPI_KEY=...          # https://newsapi.org/register                           (100/day; optional fallback)
-```
 
-Update [CREDENTIALS.md](CREDENTIALS.md) with the same list and one-line descriptions when a new key is provisioned.
+# Alert delivery (optional — pick any one)
+ALERT_WEBHOOK_URL=...    # POST JSON
+ALERT_NTFY_TOPIC=...     # ntfy.sh topic
+ALERT_EMAIL_TO=...       # plus ALERT_SMTP_HOST / USER / PASS / FROM
+```
