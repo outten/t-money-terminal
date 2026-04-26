@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# Cancel in-flight CI on a branch when a newer push lands.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: RSpec
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RACK_ENV: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Reads .ruby-version. bundler-cache: true caches the gem bundle keyed on
+      # Gemfile.lock so warm runs are fast.
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+
+      # The full RSpec suite loads every app/*.rb at boot, which catches Ruby
+      # syntax errors in the application code. The scripts/ files aren't
+      # loaded by tests, so we syntax-check them here so a typo in
+      # scheduler.rb / refresh_*.rb / check_alerts.rb is caught at CI time
+      # rather than at next cron tick.
+      - name: Ruby syntax check (scripts)
+        run: |
+          set +e
+          fail=0
+          while IFS= read -r f; do
+            out=$(ruby -c "$f" 2>&1)
+            if [ $? -ne 0 ]; then
+              echo "::error file=$f::$out"
+              fail=1
+            fi
+          done < <(find scripts -name '*.rb' -type f)
+          exit $fail
+
+      - name: Run RSpec
+        run: bundle exec rspec --color --format documentation
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## CI result"
+            echo ""
+            if [ "${{ job.status }}" = "success" ]; then
+              echo "✅ All checks passed."
+            else
+              echo "❌ One or more checks failed — see logs above."
+            fi
+            echo ""
+            echo "_Branch: \`${{ github.ref_name }}\` · Commit: \`${{ github.sha }}\`_"
+          } >> "$GITHUB_STEP_SUMMARY"
