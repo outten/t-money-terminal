@@ -22,11 +22,12 @@ RSpec.describe 'Tier 1 — dynamic symbols + heatmap + health banner + CSV perio
       ENV['ALERTS_PATH']           = File.join(dir, 'alerts.json')
       ENV['ALERTS_LOG_PATH']       = File.join(dir, 'alerts.log')
       ENV['PORTFOLIO_PATH']        = File.join(dir, 'portfolio.json')
+      ENV['TRADES_PATH']           = File.join(dir, 'trades.json')
       ENV['SYMBOLS_EXTENDED_PATH'] = File.join(dir, 'symbols_extended.json')
       SymbolIndex.reset_extensions!
       ex.run
       SymbolIndex.reset_extensions!
-      %w[WATCHLIST_PATH ALERTS_PATH ALERTS_LOG_PATH PORTFOLIO_PATH SYMBOLS_EXTENDED_PATH].each { |k| ENV.delete(k) }
+      %w[WATCHLIST_PATH ALERTS_PATH ALERTS_LOG_PATH PORTFOLIO_PATH TRADES_PATH SYMBOLS_EXTENDED_PATH].each { |k| ENV.delete(k) }
     end
   end
 

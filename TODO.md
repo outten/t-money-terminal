@@ -3,7 +3,7 @@
 **Scope constraints**
 - Free APIs only. Rate limits are absorbed by code (caching + throttling — see [app/market_data_service.rb](app/market_data_service.rb), [app/providers/cache_store.rb](app/providers/cache_store.rb)).
 - New data categories get their own `data/cache/<namespace>/` subdirectory.
-- Single-user, file-backed state (`data/portfolio.json`, `data/watchlist.json`, `data/alerts.json`). A multi-user rebuild moves to SQLite — out of scope.
+- Single-user, file-backed state (`data/portfolio.json`, `data/trades.json`, `data/watchlist.json`, `data/alerts.json`, `data/symbols_extended.json`). A multi-user rebuild moves to SQLite — out of scope.
 
 **Legend** — **[P0]** core value · **[P1]** high ROI · **[P2]** nice-to-have · **[P3]** stretch.
 
@@ -18,59 +18,37 @@
 - **§3 Charting** — TradingView lightweight-charts; four synchronized panes (price + SMA/Bollinger overlays, volume, RSI w/ 30-70 lines, MACD line+signal+histogram). Crosshair readout, period toggle, log-scale toggle, palette swap.
 - **§4 Productivity** — search (~55 symbols, type-ahead), watchlist, price alerts UI, compare mode (rebased-to-100), CSV export.
 
-### Recently merged ([PR #1](https://github.com/outten/t-money-terminal/pull/1))
+### [PR #1](https://github.com/outten/t-money-terminal/pull/1) — operational layer
 
-- **Portfolio** — [app/portfolio_store.rb](app/portfolio_store.rb), `/portfolio`, position widget on `/analysis/:symbol` with cost basis and live unrealized P&L.
+- **Portfolio (initial)** — [app/portfolio_store.rb](app/portfolio_store.rb), `/portfolio`, position widget on `/analysis/:symbol` with cost basis and live unrealized P&L. (Superseded by E in this sprint — now lot-based.)
 - **Background scheduler** — [scripts/scheduler.rb](scripts/scheduler.rb) with `--tier=quotes|fundamentals|analyst|macro|alerts|all`, market-hours gate, [launchd plist example](scripts/launchd/com.tmoney.scheduler.quotes.plist).
 - **Alert notifications** — [app/notifiers.rb](app/notifiers.rb) supports webhook / ntfy / SMTP. Wired into `make check-alerts`.
 - **Provider health** — [app/health_registry.rb](app/health_registry.rb) (in-memory ring buffer) + `/admin/health` + `/api/admin/health.json`. Instrumented across `Providers::HttpClient` and the legacy `MarketDataService` waterfall.
 - **Dividend-adjusted total return** — `:adj_close` plumbed through Yahoo / Tiingo / FMP. Sharpe / Sortino / VaR / beta now compute on adjusted closes when available; indicators stay on raw close.
 - **Auto-reload dev loop** — [.rerun](.rerun) so `make run` restarts on source edits and ignores cache writes.
 
-**Tests:** 158 examples, 0 failures.
+### [PR #2](https://github.com/outten/t-money-terminal/pull/2) — Tier 1 + CI
+
+- **A. Dynamic symbol universe** — [app/symbol_index.rb](app/symbol_index.rb) extension store + `POST /api/symbols/discover`. Search dropdown shows a "Discover XYZ" item when the query looks like a ticker but isn't in the index.
+- **B. Correlation heatmap** — `/correlations` page + `GET /api/correlations`. Server-rendered HTML table with a diverging red/white/green colormap (canvas didn't survive the parent `.chart-box` `!important` rule). Cached via `Providers::CacheStore` keyed on `(sorted symbols, period)`.
+- **C. CSV export honors current chart period** — analysis-page button updates its href as the period toggle changes.
+- **D. Provider degradation banner** — `HealthRegistry.degraded` surfaced on `/dashboard` with success-rate context + retry button.
+- **Polygon historical fallback** — `MarketDataService.fetch_historical_from_polygon` slotted into the waterfall and `prefetch_all_historical`. Fixes symbols FMP paywalls (CMCSA, BRK.B, smaller-caps) for users with a Polygon key.
+- **GitHub Actions CI** — [.github/workflows/ci.yml](.github/workflows/ci.yml) runs RSpec + scripts syntax check on every PR. `.ruby-version` pinned to 3.4.1.
+
+### This sprint — Tier 2 portfolio cluster (E + F)
+
+- **E. Tax lots / lot-based portfolio** — [app/portfolio_store.rb](app/portfolio_store.rb) refactored to multi-lot. Each lot keeps its own cost basis and acquired_at; `find(symbol)` aggregates with weighted-avg cost basis. Closed lots are retained for audit (`closed_at` + realized P&L recorded inline). Backward-compatible migration backfills new fields on legacy rows.
+- **F. Realized P&L / trade history** — [app/trades_store.rb](app/trades_store.rb) (append-only `data/trades.json`). `close_shares_fifo` walks open lots oldest-first, splits the last lot if partially closed, records the breakdown. New `/trades` page + `GET /api/trades`. New routes: `POST /api/portfolio/buy`, `POST /api/portfolio/sell`, `DELETE /api/lots/:id`. `/portfolio` summary cards now include **Realized P&L (YTD)** alongside unrealized.
+- **UI** — [views/portfolio.erb](views/portfolio.erb) shows aggregated rows with expandable per-lot detail and an inline FIFO sell form. `/analysis/:symbol` Position widget got a `<details>` lot breakdown + sell form + "Buy more (new lot)" button.
+
+**Tests:** 224 examples, 0 failures (+14 new lot/FIFO/trades coverage in [spec/feature_spec.rb](spec/feature_spec.rb)).
 
 ---
 
 ## Open work — prioritized plan
 
-### Tier 1 — high value, low cost (do these first)
-
-#### A. Dynamic symbol universe [P0]
-- **Problem**: app is hard-capped to ~55 curated tickers. Searching anything else fails silently. Single biggest visible limitation.
-- **Plan**: when a search query has no `SymbolIndex` match, hit `MarketDataService.quote(query)` once. If a quote comes back, append to a runtime extension of `SymbolIndex` and persist to `data/symbols_extended.json` so it survives restarts. Add `name` lookup via `Providers::FmpService.profile` or Finnhub profile.
-- **Touches**: [app/symbol_index.rb](app/symbol_index.rb), `/api/symbols`, `VALID_SYMBOLS` callsites.
-- **Cost**: 1 day.
-
-#### B. Correlation heatmap [P1]
-- **Problem**: `Analytics::Risk.correlation` exists but isn't surfaced. Watchlist is a stack of independent rows; pairwise correlation is the most useful comparison view.
-- **Plan**: new `/correlations` page (or tab on `/compare`). `GET /api/correlations?symbols=…&period=1y` returns an N×N matrix. Render with a plain `<canvas>` (no new JS dep). Reuse the period toggle.
-- **Touches**: new view, new route, no new analytics code.
-- **Cost**: half a day.
-
-#### C. CSV export honors current chart period [P3]
-- **Problem**: button on `/analysis/:symbol` pins to `1y`. Should match the chart's active period.
-- **Plan**: read the period state from `historicalChartState`, append `?period=…` to the export URL, server side already supports every period.
-- **Cost**: 30 minutes.
-
-#### D. Surface provider degradation on the dashboard [P1]
-- **Problem**: `/admin/health` exists but nothing prompts the user to check it. If quotes are 429ing across the board, the user just sees stale data with no warning.
-- **Plan**: add a top-banner on the dashboard when any provider's success rate over the last 20 calls drops below 50%. One link to `/admin/health` and one to refresh.
-- **Touches**: [views/dashboard.erb](views/dashboard.erb), small helper in [app/main.rb](app/main.rb).
-- **Cost**: half a day.
-
-### Tier 2 — high value, medium cost
-
-#### E. Tax lots / lot-based portfolio [P1]
-- **Problem**: `PortfolioStore` allows one entry per symbol. Real investors buy AAPL in March, June, October — each lot has its own basis and holding period.
-- **Plan**: lot table — `{id, symbol, shares, cost_basis, acquired_at}`. Aggregated views (`/portfolio`, position widget) sum across lots and report **average cost** + **per-lot detail (expandable)**. FIFO matching gets bolted on with realized P&L (item F).
-- **Touches**: [app/portfolio_store.rb](app/portfolio_store.rb) becomes lot-aware; views show aggregated + drill-down.
-- **Cost**: 1–2 days.
-
-#### F. Realized P&L / trade history [P1]
-- **Problem**: when the user sells, P&L disappears. No record of "what did I actually make this year?"
-- **Plan**: a `/trades` page backed by `data/trades.json`. Adding a SELL closes lots FIFO, computes realized P&L, writes a trade record `{date, symbol, side, shares, price, realized_pl, lots_closed}`. Year-to-date totals on the dashboard.
-- **Depends on**: E (lot-based portfolio).
-- **Cost**: 1–2 days.
+### Tier 2 — high value, medium cost (remaining)
 
 #### G. Dashboard concurrent fetch [P2]
 - **Problem**: dashboard makes serial provider calls on cache miss — quote fan-out + macro + indices + earnings + watchlist quotes. First hit can be slow.
@@ -90,13 +68,23 @@
 - Pure Ruby in [app/analytics/](app/analytics/). 1 day.
 
 #### J. MarketDataService refactor [P2 — was P1]
-- 1,200-LOC file. Split per-provider modules along the [app/providers/](app/providers/) pattern. Pure tech debt — only do this if a feature forces the issue. 1–2 days.
+- ~1,200-LOC file. Split per-provider modules along the [app/providers/](app/providers/) pattern. Pure tech debt — only do this if a feature forces the issue. 1–2 days.
 
-#### K. Efficient frontier (was §2.6) [P3]
-- Markowitz mean-variance optimization across portfolio holdings. Builds on `Analytics::Risk.correlation` + `PortfolioStore`. Academic interpretation cautions apply. 1–2 days.
+#### K. Efficient frontier [P3]
+- Markowitz mean-variance optimization across the portfolio (now natively multi-lot, so we can compute weights from `PortfolioStore.positions`). Builds on `Analytics::Risk.correlation` + `PortfolioStore`. Academic interpretation cautions apply. 1–2 days.
 
-#### L. Sector treemap (was §3.5) [P3]
+#### L. Sector treemap [P3]
 - Treemap with sector-weighted color = % change. Needs sector classification (FMP `/profile`) and a new JS dep (d3 or echarts). Aesthetic value mostly. 1 day.
+
+#### M. Pre-fetch historicals on discovery [P2 — newly visible]
+- **Problem**: when a user discovers a ticker via the search dropdown, only the quote is fetched. The first `/analysis/:symbol` visit then re-races the historical providers, which can fail (CMCSA case) and leave a blank chart.
+- **Plan**: fire-and-forget thread in `POST /api/symbols/discover` that calls `MarketDataService.historical(symbol, '1y')`. By the time the user navigates, the cache is warm. Best-effort — doesn't fail discovery on historical failure.
+- **Cost**: half a day.
+
+#### N. Richer empty-state when historicals fail [P2 — newly visible]
+- **Problem**: when every provider is rate-limited or paywalled, the chart shows a generic "No historical data available" message. The CMCSA investigation surfaced that users have no way to know *why*.
+- **Plan**: when `@historical` is empty, render a panel showing each tried provider with its last status (from `HealthRegistry`), explain that a refresh now will hit the same gates, and suggest waiting for cooldowns or scheduling a fetch via the scheduler.
+- **Cost**: half a day.
 
 ---
 

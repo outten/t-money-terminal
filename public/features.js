@@ -313,6 +313,20 @@
     });
   }
 
+  // ---- Lot detail expand/collapse on /portfolio --------------------------
+  function initLotToggles() {
+    document.querySelectorAll('.lot-toggle').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const target = document.getElementById(btn.dataset.target);
+        if (!target) return;
+        const open = target.hidden;
+        target.hidden = !open;
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        btn.textContent = btn.textContent.replace(/[▾▴]/, open ? '▴' : '▾');
+      });
+    });
+  }
+
   // ---- Boot ---------------------------------------------------------------
   // (The correlation heatmap is server-rendered as an HTML table — no JS needed.)
   window.addEventListener('DOMContentLoaded', function () {
@@ -320,5 +334,6 @@
     initWatchlistButton();
     initAlerts();
     initCompare();
+    initLotToggles();
   });
 })();

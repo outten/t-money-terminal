@@ -9,3 +9,4 @@ data/alerts_triggered.log
 data/portfolio.json
 data/symbols_extended.json
 data/scheduler*.log
+data/porfolio/fidelity/*

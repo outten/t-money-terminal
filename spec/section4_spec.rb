@@ -21,11 +21,13 @@ RSpec.describe 'Section 4 — UX features' do
       ENV['ALERTS_PATH']      = File.join(dir, 'alerts.json')
       ENV['ALERTS_LOG_PATH']  = File.join(dir, 'alerts.log')
       ENV['PORTFOLIO_PATH']   = File.join(dir, 'portfolio.json')
+      ENV['TRADES_PATH']      = File.join(dir, 'trades.json')
       ex.run
       ENV.delete('WATCHLIST_PATH')
       ENV.delete('ALERTS_PATH')
       ENV.delete('ALERTS_LOG_PATH')
       ENV.delete('PORTFOLIO_PATH')
+      ENV.delete('TRADES_PATH')
     end
   end
 
