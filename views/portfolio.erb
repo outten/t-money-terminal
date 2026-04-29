@@ -1,8 +1,8 @@
 <h2>Portfolio</h2>
-<p class="subtitle">Track holdings with cost basis and live unrealized P&amp;L. One position per symbol.</p>
+<p class="subtitle">Lot-based positions with live unrealized P&amp;L. Sells close shares FIFO and append to <a href="/trades">Trade History</a>.</p>
 
 <% if @rows.empty? %>
-  <div class="notice">No holdings yet. Add your first position below.</div>
+  <div class="notice">No open positions. Buy your first lot below.</div>
 <% else %>
   <section class="portfolio-summary">
     <div class="summary-card">
@@ -23,8 +23,14 @@
       </div>
     </div>
     <div class="summary-card">
+      <div class="summary-label">Realized P&amp;L (YTD)</div>
+      <div class="summary-value mono <%= @realized_ytd >= 0 ? 'positive' : 'negative' %>">
+        <%= format_money(@realized_ytd) %>
+      </div>
+    </div>
+    <div class="summary-card">
       <div class="summary-label">Positions</div>
-      <div class="summary-value mono"><%= @totals[:holdings_count] %></div>
+      <div class="summary-value mono"><%= @totals[:positions_count] %></div>
     </div>
   </section>
 
@@ -33,20 +39,20 @@
       <tr>
         <th>Symbol</th>
         <th class="num">Shares</th>
-        <th class="num">Cost Basis</th>
+        <th class="num">Avg Cost</th>
         <th class="num">Price</th>
         <th class="num">Market Value</th>
         <th class="num">Unrealized P&amp;L</th>
         <th class="num">P&amp;L %</th>
         <th class="num">Day</th>
         <th class="num">Weight</th>
-        <th>Notes</th>
+        <th class="num">Lots</th>
         <th></th>
       </tr>
     </thead>
     <tbody>
       <% @rows.each do |r| %>
-        <tr>
+        <tr class="position-row" data-symbol="<%= r[:symbol] %>">
           <td><a href="/analysis/<%= r[:symbol] %>"><%= r[:symbol] %></a></td>
           <td class="num mono"><%= r[:shares] %></td>
           <td class="num mono">$<%= format('%.2f', r[:cost_basis]) %></td>
@@ -62,12 +68,84 @@
           </td>
           <td class="num mono"><%= r[:day_change] || '—' %></td>
           <td class="num mono"><%= r[:weight] ? format_percent(r[:weight], digits: 1) : '—' %></td>
-          <td class="muted"><%= r[:notes] %></td>
+          <td class="num mono">
+            <button type="button" class="link-btn lot-toggle" data-target="lots-<%= r[:symbol] %>"
+                    aria-expanded="false" title="Show / hide individual lots">
+              <%= r[:lots].length %> ▾
+            </button>
+          </td>
           <td>
             <form action="/portfolio/remove" method="post" style="margin:0">
               <input type="hidden" name="symbol" value="<%= r[:symbol] %>">
-              <button type="submit" class="link-btn" title="Remove position">✕</button>
+              <button type="submit" class="link-btn"
+                      title="Remove ALL lots for this symbol without recording a trade (typo-correction). To realise P&L, use Sell below."
+                      onclick="return confirm('Remove all lots for <%= r[:symbol] %> without realising P&amp;L? This is for typo correction — to record a sale, use Sell instead.');">
+                ✕
+              </button>
             </form>
+          </td>
+        </tr>
+
+        <!-- Expandable lot detail row -->
+        <tr id="lots-<%= r[:symbol] %>" class="lot-detail-row" hidden>
+          <td colspan="11">
+            <div class="lot-detail-wrap">
+              <table class="lot-detail-table">
+                <thead>
+                  <tr>
+                    <th>Acquired</th>
+                    <th class="num">Shares</th>
+                    <th class="num">Cost Basis</th>
+                    <th class="num">Lot Cost</th>
+                    <th class="num">Lot Value</th>
+                    <th class="num">Lot P&amp;L</th>
+                    <th>Notes</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <% r[:lots].sort_by { |l| l[:acquired_at] || l[:created_at] }.each do |lot| %>
+                    <% lot_cost  = (lot[:shares].to_f * lot[:cost_basis].to_f).round(2) %>
+                    <% lot_value = r[:current_price] ? (lot[:shares].to_f * r[:current_price].to_f).round(2) : nil %>
+                    <% lot_pl    = lot_value ? (lot_value - lot_cost).round(2) : nil %>
+                    <tr>
+                      <td><%= lot[:acquired_at] || lot[:created_at][0,10] %></td>
+                      <td class="num mono"><%= lot[:shares] %></td>
+                      <td class="num mono">$<%= format('%.2f', lot[:cost_basis]) %></td>
+                      <td class="num mono"><%= format_money(lot_cost) %></td>
+                      <td class="num mono"><%= lot_value ? format_money(lot_value) : '—' %></td>
+                      <td class="num mono <%= lot_pl && lot_pl >= 0 ? 'positive' : (lot_pl && lot_pl < 0 ? 'negative' : '') %>">
+                        <%= lot_pl ? format_money(lot_pl) : '—' %>
+                      </td>
+                      <td class="muted"><%= lot[:notes] %></td>
+                      <td>
+                        <form action="/lots/remove" method="post" style="margin:0">
+                          <input type="hidden" name="id" value="<%= lot[:id] %>">
+                          <button type="submit" class="link-btn"
+                                  title="Remove this lot without recording a trade (typo correction)"
+                                  onclick="return confirm('Remove this lot without realising P&amp;L?');">
+                            ✕
+                          </button>
+                        </form>
+                      </td>
+                    </tr>
+                  <% end %>
+                </tbody>
+              </table>
+
+              <!-- Sell form: FIFO close across this symbol's open lots -->
+              <form action="/portfolio/sell" method="post" class="sell-form">
+                <input type="hidden" name="symbol" value="<%= r[:symbol] %>">
+                <label>Sell <input type="number" step="0.000001" min="0.000001" max="<%= r[:shares] %>"
+                                   name="shares" required placeholder="<%= r[:shares] %>">
+                  shares</label>
+                <label>at <input type="number" step="0.0001" min="0.0001" name="price" required
+                                  value="<%= r[:current_price] %>"> $/share</label>
+                <label>on <input type="date" name="sold_at"></label>
+                <button type="submit" class="btn-primary">Sell (FIFO)</button>
+                <span class="data-source">Closes oldest lots first; realises P&amp;L on the trade-history page.</span>
+              </form>
+            </div>
           </td>
         </tr>
       <% end %>
@@ -76,11 +154,11 @@
 <% end %>
 
 <section class="portfolio-add">
-  <h3>Add or update a position</h3>
-  <form action="/portfolio/upsert" method="post" class="portfolio-form">
+  <h3>Buy a position</h3>
+  <form action="/portfolio/buy" method="post" class="portfolio-form">
     <label>Symbol
       <input type="text" name="symbol" required autocomplete="off"
-             placeholder="AAPL" list="symbol-options" maxlength="10">
+             placeholder="AAPL" maxlength="10">
     </label>
     <label>Shares
       <input type="number" step="0.000001" min="0.000001" name="shares" required placeholder="100">
@@ -94,10 +172,10 @@
     <label class="full-width">Notes (optional)
       <input type="text" name="notes" maxlength="120" placeholder="Long-term hold">
     </label>
-    <button type="submit" class="btn-primary">Save position</button>
+    <button type="submit" class="btn-primary">Buy</button>
   </form>
   <p class="data-source">
-    Cost basis is the average price per share at entry. Use the same form to update an existing position
-    — it replaces the prior record. Unknown symbols are silently ignored.
+    Each Buy creates a new lot. To add to an existing position, just submit again — both lots remain
+    visible (with their own cost basis) under the position's expandable detail.
   </p>
 </section>

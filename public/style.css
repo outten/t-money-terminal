@@ -802,6 +802,69 @@ body.dark .link-btn:hover { background: rgba(255,255,255,0.06); color: #ff453a; 
 }
 .position-section .portfolio-form { margin-top: 8px; }
 
+/* ---------- Lot detail (expandable on /portfolio) ---------- */
+.lot-detail-row td { padding: 0; background: transparent; }
+.lot-detail-wrap {
+  background: #f9f9fb;
+  border-radius: 8px;
+  margin: 4px 0 12px;
+  padding: 12px 16px;
+}
+.lot-detail-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+.lot-detail-table th, .lot-detail-table td {
+  padding: 6px 10px;
+  text-align: left;
+  border-bottom: 1px solid #ececef;
+}
+.lot-detail-table th { color: #6e6e73; font-weight: 500; }
+.lot-detail-table .num { text-align: right; }
+.sell-form {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  align-items: center;
+  font-size: 0.88rem;
+}
+.sell-form input {
+  width: 110px;
+  padding: 6px 8px;
+  font-size: 13px;
+  border: 1px solid #d1d1d6;
+  border-radius: 5px;
+  background: #fff;
+  font-variant-numeric: tabular-nums;
+}
+.sell-form input[type="date"] { width: 150px; }
+.sell-form .btn-primary {
+  padding: 7px 14px;
+  font-size: 13px;
+}
+.sell-form .data-source { margin: 0; flex: 1 1 100%; font-size: 0.78rem; }
+
+body.dark .lot-detail-wrap { background: #1c1c1e; }
+body.dark .lot-detail-table th, body.dark .lot-detail-table td { border-bottom-color: #2c2c2e; }
+body.dark .lot-detail-table th { color: #98989d; }
+body.dark .sell-form input { background: #1c1c1e; border-color: #3a3a3c; color: #f5f5f7; }
+
+.lot-detail-inline {
+  margin-top: 10px;
+  font-size: 0.88rem;
+}
+.lot-detail-inline summary {
+  cursor: pointer;
+  color: #0071e3;
+  padding: 4px 0;
+  user-select: none;
+}
+.lot-detail-inline summary:hover { text-decoration: underline; }
+.lot-detail-inline .lot-detail-table { margin-top: 6px; }
+body.dark .lot-detail-inline summary { color: #0a84ff; }
+
 /* ---------- Correlation heatmap ---------- */
 .corr-heatmap-wrap {
   margin: 12px 0 8px;

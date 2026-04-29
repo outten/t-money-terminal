@@ -13,6 +13,7 @@ require_relative 'symbol_index'
 require_relative 'watchlist_store'
 require_relative 'alerts_store'
 require_relative 'portfolio_store'
+require_relative 'trades_store'
 require_relative 'health_registry'
 require_relative 'correlation_store'
 
@@ -157,9 +158,10 @@ class TMoneyTerminal < Sinatra::Base
     @analytics = safe_fetch { compute_analytics(symbol, @historical) } || {}
 
     # Holding (if any) — joined to live quote so the Position panel can show
-    # market value and unrealized P&L without re-fetching.
-    raw_holding = PortfolioStore.find(symbol)
-    @position   = raw_holding ? valuate_holding(raw_holding) : nil
+    # market value and unrealized P&L without re-fetching. `find` returns the
+    # aggregated open position across all lots; per-lot detail is in :lots.
+    raw_position = PortfolioStore.find(symbol)
+    @position    = raw_position ? valuate_position(raw_position) : nil
 
     # Determine if any data is stale (served from persistent fallback cache)
     stale_keys  = [symbol, "analyst:#{symbol}", "profile:#{symbol}", "candle:#{symbol}:1y"]
@@ -298,67 +300,161 @@ class TMoneyTerminal < Sinatra::Base
   end
 
   # -------------------------------------------------------------------------
-  # Portfolio
+  # Portfolio (lot-based)
   # -------------------------------------------------------------------------
 
   get '/portfolio' do
-    holdings = PortfolioStore.read
-    @rows    = holdings.map { |h| valuate_holding(h) }
+    @rows    = PortfolioStore.positions.map { |p| valuate_position(p) }
     @totals  = portfolio_totals(@rows)
+    @realized_ytd = TradesStore.realized_pl_ytd
     erb :portfolio
   end
 
   get '/api/portfolio' do
     content_type :json
-    rows = PortfolioStore.read.map { |h| valuate_holding(h) }
-    { holdings: rows, totals: portfolio_totals(rows) }.to_json
+    rows = PortfolioStore.positions.map { |p| valuate_position(p) }
+    {
+      positions:    rows,
+      totals:       portfolio_totals(rows),
+      realized_ytd: TradesStore.realized_pl_ytd
+    }.to_json
   end
 
-  post '/api/portfolio' do
+  # Buy a new lot. Always creates a NEW lot (no upsert / replace semantics).
+  post '/api/portfolio/buy' do
     content_type :json
     body = request_json
+    sym  = (body['symbol'] || params['symbol']).to_s.upcase
+    halt 404, { error: 'Unknown symbol' }.to_json unless SymbolIndex.known?(sym)
     begin
-      holding = PortfolioStore.upsert(
-        symbol:      (body['symbol']      || params['symbol']),
+      lot = PortfolioStore.add_lot(
+        symbol:      sym,
         shares:      (body['shares']      || params['shares']),
-        cost_basis:  (body['cost_basis']  || params['cost_basis']),
+        cost_basis:  (body['cost_basis']  || body['price']  || params['cost_basis'] || params['price']),
         acquired_at: (body['acquired_at'] || params['acquired_at']),
         notes:       (body['notes']       || params['notes'])
       )
-      halt 404, { error: 'Unknown symbol' }.to_json unless SymbolIndex.known?(holding[:symbol])
-      holding.to_json
+      TradesStore.record_buy(
+        symbol: lot[:symbol],
+        shares: lot[:shares],
+        price:  lot[:cost_basis],
+        date:   lot[:acquired_at],
+        notes:  lot[:notes],
+        lot_id: lot[:id]
+      )
+      lot.to_json
     rescue ArgumentError => e
       halt 400, { error: e.message }.to_json
     end
   end
 
+  # Sell shares of a held symbol via FIFO. Returns the realized-P&L breakdown.
+  post '/api/portfolio/sell' do
+    content_type :json
+    body = request_json
+    sym  = (body['symbol'] || params['symbol']).to_s.upcase
+    halt 404, { error: 'Unknown symbol' }.to_json unless SymbolIndex.known?(sym)
+
+    begin
+      breakdown = PortfolioStore.close_shares_fifo(
+        symbol:  sym,
+        shares:  (body['shares']  || params['shares']),
+        price:   (body['price']   || params['price']),
+        sold_at: (body['sold_at'] || params['sold_at'])
+      )
+      TradesStore.record_sell(breakdown, notes: (body['notes'] || params['notes']))
+      breakdown.to_json
+    rescue ArgumentError => e
+      halt 400, { error: e.message }.to_json
+    end
+  end
+
+  # Wipe all lots for a symbol without recording a trade — for typo correction.
   delete '/api/portfolio/:symbol' do
     content_type :json
     list = PortfolioStore.remove(params['symbol'])
-    { holdings: list }.to_json
+    { lots: list }.to_json
   end
 
-  # Form-POST fallback for the /portfolio "Add" form (works without JS).
-  post '/portfolio/upsert' do
+  # Remove a single lot by id (also for typo correction).
+  delete '/api/lots/:id' do
+    content_type :json
+    list = PortfolioStore.remove_lot(params['id'])
+    { lots: list }.to_json
+  end
+
+  # --- Form-POST fallbacks (work without JS) ---
+
+  post '/portfolio/buy' do
     if SymbolIndex.known?(params['symbol'].to_s.upcase)
       begin
-        PortfolioStore.upsert(
+        lot = PortfolioStore.add_lot(
           symbol:      params['symbol'],
           shares:      params['shares'],
-          cost_basis:  params['cost_basis'],
+          cost_basis:  params['cost_basis'] || params['price'],
           acquired_at: params['acquired_at'],
           notes:       params['notes']
         )
+        TradesStore.record_buy(
+          symbol: lot[:symbol], shares: lot[:shares], price: lot[:cost_basis],
+          date: lot[:acquired_at], notes: lot[:notes], lot_id: lot[:id]
+        )
       rescue ArgumentError
-        # fall through to redirect — UI shows current state
+        # silent — page redirect lets the user see current state
       end
     end
-    redirect '/portfolio', 302
+    redirect (params['return_to'] || '/portfolio'), 302
+  end
+
+  post '/portfolio/sell' do
+    if SymbolIndex.known?(params['symbol'].to_s.upcase)
+      begin
+        breakdown = PortfolioStore.close_shares_fifo(
+          symbol:  params['symbol'],
+          shares:  params['shares'],
+          price:   params['price'],
+          sold_at: params['sold_at']
+        )
+        TradesStore.record_sell(breakdown, notes: params['notes'])
+      rescue ArgumentError
+        # silent
+      end
+    end
+    redirect (params['return_to'] || '/portfolio'), 302
   end
 
   post '/portfolio/remove' do
     PortfolioStore.remove(params['symbol']) if params['symbol']
     redirect '/portfolio', 302
+  end
+
+  post '/lots/remove' do
+    PortfolioStore.remove_lot(params['id']) if params['id']
+    redirect (params['return_to'] || '/portfolio'), 302
+  end
+
+  # -------------------------------------------------------------------------
+  # Trade history (§F)
+  # -------------------------------------------------------------------------
+
+  get '/trades' do
+    @symbol = params['symbol'].to_s.upcase
+    @symbol = nil if @symbol.empty? || !SymbolIndex.known?(@symbol)
+    @trades = @symbol ? TradesStore.for_symbol(@symbol) : TradesStore.read
+    @realized_ytd   = TradesStore.realized_pl_ytd
+    @realized_total = TradesStore.realized_pl_total
+    erb :trades
+  end
+
+  get '/api/trades' do
+    content_type :json
+    sym = params['symbol']&.upcase
+    list = sym && SymbolIndex.known?(sym) ? TradesStore.for_symbol(sym) : TradesStore.read
+    {
+      trades:         list,
+      realized_ytd:   TradesStore.realized_pl_ytd,
+      realized_total: TradesStore.realized_pl_total
+    }.to_json
   end
 
   # -------------------------------------------------------------------------
@@ -726,22 +822,22 @@ class TMoneyTerminal < Sinatra::Base
     end
   end
 
-  # Valuate a single holding by joining against the live quote. Returns the
-  # same hash with derived fields: current_price, market_value, cost_value,
-  # unrealized_pl ($), unrealized_pl_pct, day_change_pct (from quote).
+  # Valuate an aggregated position (from PortfolioStore.positions) against
+  # the live quote. Adds derived fields: current_price, cost_value, market_value,
+  # unrealized_pl ($), unrealized_pl_pct, day_change.
   # Missing/failed quotes still return the entry with current_price: nil.
-  def valuate_holding(h)
-    sym   = h[:symbol]
+  def valuate_position(p)
+    sym   = p[:symbol]
     quote = safe_fetch { MarketDataService.quote(sym) } || {}
     price = (quote['05. price'] || quote[:price]).to_f
 
-    cost_value      = (h[:shares].to_f * h[:cost_basis].to_f).round(2)
-    market_value    = price > 0 ? (h[:shares].to_f * price).round(2) : nil
+    cost_value      = (p[:shares].to_f * p[:cost_basis].to_f).round(2)
+    market_value    = price > 0 ? (p[:shares].to_f * price).round(2) : nil
     unrealized_pl   = market_value ? (market_value - cost_value).round(2) : nil
     unrealized_pct  = (market_value && cost_value > 0) ? ((market_value - cost_value) / cost_value) : nil
     day_change_str  = quote['10. change percent'] || quote[:change]
 
-    h.merge(
+    p.merge(
       current_price:     price > 0 ? price.round(4) : nil,
       cost_value:        cost_value,
       market_value:      market_value,
@@ -770,7 +866,7 @@ class TMoneyTerminal < Sinatra::Base
       market_value:      market_value.round(2),
       unrealized_pl:     pl.round(2),
       unrealized_pl_pct: pl_pct,
-      holdings_count:    rows.length
+      positions_count:   rows.length
     }
   end
 
