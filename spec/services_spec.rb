@@ -275,6 +275,7 @@ RSpec.describe MarketDataService do
     end
 
     it 'marks entry stale when cached_at is older than CACHE_TTL' do
+      ENV['MARKET_OPEN'] = '1' # pin to market-hours TTL so CACHE_TTL is the cutoff
       key = 'candle:SPY:1y'
       MarketDataService.send(:store_cache, key, [{ date: '2026-01-01', close: 100.0 }])
       old_ts = Time.now - MarketDataService::CACHE_TTL - 60
@@ -282,11 +283,14 @@ RSpec.describe MarketDataService do
 
       entry = MarketDataService.cache_summary.find { |e| e[:key] == key }
       expect(entry[:is_stale]).to be true
+    ensure
+      ENV.delete('MARKET_OPEN')
     end
   end
 
   describe '.historical with expired cache' do
     it 'does not serve a live historical entry older than CACHE_TTL' do
+      ENV['MARKET_OPEN'] = '1' # pin to market-hours TTL so CACHE_TTL is the cutoff
       key = 'candle:SPY:1y'
       points = [{ date: '2026-01-01', close: 100.0 }]
       MarketDataService.send(:store_cache, key, points)
@@ -301,6 +305,8 @@ RSpec.describe MarketDataService do
       result = MarketDataService.historical('SPY', '1y')
       expect(result).to eq(points)
       expect(MarketDataService.instance_variable_get(:@cache)[key]).to be_nil
+    ensure
+      ENV.delete('MARKET_OPEN')
     end
   end
 end
