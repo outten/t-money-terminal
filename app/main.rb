@@ -16,6 +16,7 @@ require_relative 'portfolio_store'
 require_relative 'trades_store'
 require_relative 'fidelity_importer'
 require_relative 'import_snapshot_store'
+require_relative 'portfolio_diff'
 require_relative 'health_registry'
 require_relative 'correlation_store'
 
@@ -309,6 +310,7 @@ class TMoneyTerminal < Sinatra::Base
     @rows    = PortfolioStore.positions.map { |p| valuate_position(p) }
     @totals  = portfolio_totals(@rows)
     @latest_snapshot = ImportSnapshotStore.latest(source: 'fidelity')
+    @snapshot_count  = ImportSnapshotStore.list(source: 'fidelity').length
     merge_broker_fields!(@rows, @latest_snapshot)
     annotate_portfolio_signals!(@rows, @totals)
     @realized_ytd     = TradesStore.realized_pl_ytd
@@ -390,6 +392,24 @@ class TMoneyTerminal < Sinatra::Base
     content_type :json
     list = PortfolioStore.remove_lot(params['id'])
     { lots: list }.to_json
+  end
+
+  # --- Snapshot drift / portfolio changes ---
+
+  # Compares the latest two Fidelity snapshots and shows what changed:
+  # positions added, sold, scaled up/down, plus value-delta totals.
+  # Big-mover rows surface first; unchanged positions appear last for context.
+  get '/portfolio/drift' do
+    @snapshots = ImportSnapshotStore.list(source: 'fidelity')
+    @diff = @snapshots.length >= 2 ? PortfolioDiff.compute_latest_pair(source: 'fidelity') : nil
+    erb :drift
+  end
+
+  get '/api/portfolio/drift' do
+    content_type :json
+    diff = PortfolioDiff.compute_latest_pair(source: 'fidelity')
+    halt 404, { error: 'need at least 2 snapshots to compute drift' }.to_json unless diff
+    diff.to_json
   end
 
   # --- Fidelity broker import ---

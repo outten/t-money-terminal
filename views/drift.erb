@@ -1,0 +1,110 @@
+<h2>Portfolio Drift</h2>
+<p class="subtitle">What changed between your two most recent broker imports.</p>
+
+<% if @diff.nil? %>
+  <div class="notice">
+    <% if @snapshots.empty? %>
+      No broker imports yet. Drop a Fidelity CSV in <code>data/porfolio/fidelity/</code> and click
+      <strong>Import latest Fidelity export</strong> on <a href="/portfolio">/portfolio</a>.
+    <% else %>
+      Only one snapshot exists (<%= @snapshots.first[:basename] %>). Drift comparison needs two —
+      run another import after a future trading day.
+    <% end %>
+  </div>
+<% else %>
+  <% before = @diff[:before_meta] %>
+  <% after  = @diff[:after_meta]  %>
+  <% t      = @diff[:totals]      %>
+
+  <p class="subtitle">
+    <strong><%= before[:file_date] || before[:basename] %></strong>
+    →
+    <strong><%= after[:file_date]  || after[:basename] %></strong>
+    &middot; <a href="/portfolio">back to portfolio</a>
+  </p>
+
+  <section class="portfolio-summary">
+    <div class="summary-card">
+      <div class="summary-label">Value Δ</div>
+      <div class="summary-value mono <%= t[:value_delta] >= 0 ? 'positive' : 'negative' %>">
+        <%= format_money(t[:value_delta]) %>
+        <% if t[:value_delta_pct] %>
+          <span class="summary-sub">(<%= format_percent(t[:value_delta_pct]) %>)</span>
+        <% end %>
+      </div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Before</div>
+      <div class="summary-value mono"><%= format_money(t[:before_value]) %></div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">After</div>
+      <div class="summary-value mono"><%= format_money(t[:after_value]) %></div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Added · Removed</div>
+      <div class="summary-value mono">
+        <span class="positive"><%= t[:added_count] %></span>
+        ·
+        <span class="negative"><%= t[:removed_count] %></span>
+      </div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Changed · Unchanged</div>
+      <div class="summary-value mono"><%= t[:changed_count] %> · <%= t[:unchanged_count] %></div>
+    </div>
+  </section>
+
+  <table class="data-table portfolio-table">
+    <thead>
+      <tr>
+        <th>Symbol</th>
+        <th>Status</th>
+        <th class="num">Shares Before</th>
+        <th class="num">Shares After</th>
+        <th class="num">Δ Shares</th>
+        <th class="num">Value Before</th>
+        <th class="num">Value After</th>
+        <th class="num">Δ Value</th>
+        <th class="num">Δ Cost Basis</th>
+        <th class="num">Δ % of Account</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% @diff[:rows].each do |r| %>
+        <% status_class = case r[:status]
+                         when 'added'     then 'signal-buy'
+                         when 'removed'   then 'signal-sell'
+                         when 'changed'   then 'signal-hold'
+                         else                  ''
+                         end %>
+        <tr class="drift-row drift-<%= r[:status] %>">
+          <td><a href="/analysis/<%= r[:symbol] %>"><%= r[:symbol] %></a></td>
+          <td><span class="signal-badge <%= status_class %>"><%= r[:status] %></span></td>
+          <td class="num mono"><%= r[:before] ? r[:before]['shares'] : '—' %></td>
+          <td class="num mono"><%= r[:after]  ? r[:after]['shares']  : '—' %></td>
+          <td class="num mono <%= r[:shares_delta] > 0 ? 'positive' : (r[:shares_delta] < 0 ? 'negative' : '') %>">
+            <%= r[:shares_delta].zero? ? '—' : (r[:shares_delta] > 0 ? "+#{r[:shares_delta]}" : r[:shares_delta]) %>
+          </td>
+          <td class="num mono"><%= r[:before] ? format_money(r[:before]['current_value']) : '—' %></td>
+          <td class="num mono"><%= r[:after]  ? format_money(r[:after]['current_value'])  : '—' %></td>
+          <td class="num mono <%= r[:value_delta] > 0 ? 'positive' : (r[:value_delta] < 0 ? 'negative' : '') %>">
+            <%= r[:value_delta].zero? ? '—' : format_money(r[:value_delta]) %>
+          </td>
+          <td class="num mono <%= r[:cost_basis_delta] > 0.001 ? 'positive' : (r[:cost_basis_delta] < -0.001 ? 'negative' : '') %>">
+            <%= r[:cost_basis_delta].abs < 0.001 ? '—' : "$#{format('%.2f', r[:cost_basis_delta])}" %>
+          </td>
+          <td class="num mono <%= r[:pct_account_delta] > 0.01 ? 'positive' : (r[:pct_account_delta] < -0.01 ? 'negative' : '') %>">
+            <%= r[:pct_account_delta].abs < 0.01 ? '—' : "#{r[:pct_account_delta] > 0 ? '+' : ''}#{r[:pct_account_delta].round(2)}%" %>
+          </td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+
+  <p class="data-source">
+    Snapshots are kept under <code>data/imports/fidelity/</code>. Older snapshots are not deleted, so
+    historical drift comparisons across longer windows are possible — let me know if you'd like a
+    range-picker view.
+  </p>
+<% end %>

@@ -30,6 +30,9 @@
           (<%= Time.parse(@latest_snapshot['written_at']).strftime('%Y-%m-%d %H:%M %Z') %>)
         <% end %>
         &middot; <%= (@latest_snapshot['positions'] || []).length %> positions in snapshot
+        <% if @snapshot_count && @snapshot_count >= 2 %>
+          &middot; <a href="/portfolio/drift">View drift</a>
+        <% end %>
       <% end %>
     </span>
   </form>

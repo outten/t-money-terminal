@@ -9,9 +9,15 @@ require 'time'
 require 'fileutils'
 require_relative 'health_registry'
 require_relative 'providers'
+require_relative 'import_snapshot_store'
 
 class MarketDataService
-  CACHE_TTL  = 3600 # 1 hour
+  CACHE_TTL          = 3600       # 1 hour during US market hours (09:30–16:00 ET, M-F)
+  CACHE_TTL_CLOSED   = 12 * 3600  # 12 hours when the market is closed (overnight, weekends, holidays)
+  # Note: the 12h closed-market TTL means a Friday 4pm prime stays valid all
+  # weekend, and an evening prime survives until late next morning. Feed
+  # fresh broker exports nightly via `make scheduler` if longer windows worry
+  # you — explicit imports always re-prime regardless of TTL.
   CACHE_DIR  = File.expand_path('../../data/cache', __FILE__).freeze
   CACHE_FILE = File.join(CACHE_DIR, 'market_cache.json').freeze
   LEGACY_CACHE_FILE = File.expand_path('../../.cache/market_cache.json', __FILE__).freeze
@@ -81,12 +87,34 @@ class MarketDataService
 
   class << self
     def cache_fresh?
-      @cache_timestamp && (Time.now - @cache_timestamp) < CACHE_TTL
+      @cache_timestamp && (Time.now - @cache_timestamp) < effective_ttl
     end
 
     def cache_entry_fresh?(key)
       ts = @cache_timestamps[key]
-      ts && (Time.now - ts) < CACHE_TTL
+      ts && (Time.now - ts) < effective_ttl
+    end
+
+    # CACHE_TTL during market hours, CACHE_TTL_CLOSED otherwise. Picked at
+    # check time so a quote primed pre-close stays valid through the entire
+    # off-hours window without re-fetching.
+    def effective_ttl
+      market_open? ? CACHE_TTL : CACHE_TTL_CLOSED
+    end
+
+    # US equities cash session: 09:30–16:00 ET, Mon–Fri. Approximated by
+    # converting the current UTC time with a fixed -5 hour offset (EST). The
+    # one-hour error window during DST is acceptable — a quote that's
+    # "stale" 30 minutes before open or after close just gets refreshed on
+    # next provider call. Override via ENV['MARKET_OPEN'] for tests.
+    def market_open?
+      override = ENV['MARKET_OPEN']
+      return override == '1' || override.to_s.downcase == 'true' unless override.nil? || override.empty?
+
+      t = Time.now.utc - (5 * 3600)
+      return false if t.saturday? || t.sunday?
+      hour_minute = t.hour * 60 + t.min
+      hour_minute.between?(9 * 60 + 30, 16 * 60)
     end
 
     def read_live_cache(key)
@@ -503,8 +531,36 @@ class MarketDataService
         return @persistent_cache[symbol]
       end
 
+      # Final fallback: the latest broker import snapshot has a price for this
+      # symbol from the user's last sync. Better than mock data (which is
+      # invented), and exactly the right answer when providers are all
+      # throttled/paywalled and the user just imported.
+      snapshot_quote = build_quote_from_snapshot(symbol)
+      if snapshot_quote
+        warn "[MarketDataService] All providers failed for #{symbol} — serving from broker snapshot" unless test_env?
+        store_cache(symbol, snapshot_quote)
+        return snapshot_quote
+      end
+
       warn "[MarketDataService] All providers failed for #{symbol} — using mock data" unless test_env?
       MOCK_PRICES[symbol] || { price: 'N/A', change: 'N/A', volume: 'N/A' }
+    end
+
+    # Lookup the most recent broker snapshot for `symbol` and shape it into
+    # the AV-style quote hash the rest of the app expects. Returns nil when
+    # ImportSnapshotStore has nothing for this symbol or the snapshot row
+    # lacks a usable price.
+    def build_quote_from_snapshot(symbol)
+      return nil unless defined?(ImportSnapshotStore)
+      bp = ImportSnapshotStore.find_position(symbol, source: 'fidelity')
+      return nil unless bp.is_a?(Hash)
+      price = bp['last_price']
+      return nil if price.nil? || price.to_f <= 0
+      {
+        '05. price'          => price.to_s,
+        '10. change percent' => "#{bp['day_change_pct'] || 0}%",
+        '06. volume'         => '0'
+      }
     end
 
     def try_providers(symbol)
