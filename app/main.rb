@@ -14,6 +14,8 @@ require_relative 'watchlist_store'
 require_relative 'alerts_store'
 require_relative 'portfolio_store'
 require_relative 'trades_store'
+require_relative 'fidelity_importer'
+require_relative 'import_snapshot_store'
 require_relative 'health_registry'
 require_relative 'correlation_store'
 
@@ -306,7 +308,14 @@ class TMoneyTerminal < Sinatra::Base
   get '/portfolio' do
     @rows    = PortfolioStore.positions.map { |p| valuate_position(p) }
     @totals  = portfolio_totals(@rows)
-    @realized_ytd = TradesStore.realized_pl_ytd
+    @latest_snapshot = ImportSnapshotStore.latest(source: 'fidelity')
+    merge_broker_fields!(@rows, @latest_snapshot)
+    annotate_portfolio_signals!(@rows, @totals)
+    @realized_ytd     = TradesStore.realized_pl_ytd
+    @import_count     = params['imported_count']&.to_i
+    @import_file_date = params['imported_file']
+    @import_skipped   = params['imported_skipped']&.to_i
+    @latest_fidelity  = FidelityImporter.latest_file_in
     erb :portfolio
   end
 
@@ -381,6 +390,40 @@ class TMoneyTerminal < Sinatra::Base
     content_type :json
     list = PortfolioStore.remove_lot(params['id'])
     { lots: list }.to_json
+  end
+
+  # --- Fidelity broker import ---
+
+  # One-click import of the newest CSV in data/porfolio/fidelity/. Replaces
+  # PortfolioStore lots for every symbol the file contains (file is
+  # authoritative), registers unknown tickers as SymbolIndex extensions, and
+  # primes the quote cache with the file's Last Price so the page renders
+  # fast even when live providers are throttled.
+  post '/portfolio/import/fidelity' do
+    begin
+      summary = FidelityImporter.import!
+      qs = "imported_count=#{summary[:imported]}" \
+           "&imported_file=#{summary[:file_date]&.iso8601}" \
+           "&imported_skipped=#{summary[:skipped].length}"
+      redirect "/portfolio?#{qs}", 302
+    rescue StandardError => e
+      warn "[fidelity import] #{e.class}: #{e.message}" unless ENV['RACK_ENV'] == 'test'
+      redirect "/portfolio?imported_error=#{URI.encode_www_form_component(e.message)}", 302
+    end
+  end
+
+  get '/api/portfolio/import/fidelity/preview' do
+    content_type :json
+    path = FidelityImporter.latest_file_in
+    halt 404, { error: 'no Fidelity CSV found' }.to_json unless path
+    parsed = FidelityImporter.parse(path)
+    {
+      file_path: parsed[:file_path],
+      file_date: parsed[:file_date]&.iso8601,
+      positions_count: parsed[:positions].length,
+      skipped_count:   parsed[:skipped].length,
+      positions:       parsed[:positions]
+    }.to_json
   end
 
   # --- Form-POST fallbacks (work without JS) ---
@@ -845,6 +888,79 @@ class TMoneyTerminal < Sinatra::Base
       unrealized_pl_pct: unrealized_pct,
       day_change:        day_change_str
     )
+  end
+
+  # Merge broker-supplied fields from the most recent import snapshot into
+  # each row. Broker fields use the `broker_` prefix so they don't collide
+  # with our locally-computed valuations. Mutates rows in place.
+  def merge_broker_fields!(rows, snapshot)
+    return rows unless snapshot
+    by_symbol = (snapshot['positions'] || []).each_with_object({}) do |p, acc|
+      sym = p['symbol']&.upcase
+      acc[sym] = p if sym
+    end
+    return rows if by_symbol.empty?
+
+    rows.each do |row|
+      bp = by_symbol[row[:symbol]]
+      next unless bp
+      row[:broker_pct_account]  = bp['pct_account']
+      row[:broker_total_pl]     = bp['total_pl']
+      row[:broker_day_change]   = bp['day_change']
+      row[:broker_day_change_pct] = bp['day_change_pct']
+      row[:broker_description]  = bp['description']
+      row[:broker_accounts]     = bp['accounts']
+    end
+    rows
+  end
+
+  # Annotate each row with `:recommendation` (BUY/HOLD/SELL), `:notes` (array
+  # of short observations: concentration risk, RSI extremes, trend vs SMA200),
+  # and `:cost_basis_signal` (`:profit`/`:loss` vs broker basis). Mutates rows
+  # in place. Best-effort — falls back silently if analytics aren't available.
+  def annotate_portfolio_signals!(rows, totals)
+    rows.each do |row|
+      sym = row[:symbol]
+
+      # Existing momentum signal — same path the dashboard uses.
+      row[:recommendation] = safe_fetch { RecommendationService.signal_for(sym) } || 'HOLD'
+
+      notes = []
+      pct_of_value = (totals[:market_value].to_f.positive? && row[:market_value]) \
+                     ? (row[:market_value] / totals[:market_value]) : 0
+      row[:weight] ||= pct_of_value
+      notes << "Concentration #{format_percent(pct_of_value, digits: 1)} of portfolio" if pct_of_value > 0.20
+
+      # Pull cached historicals if available — zero API cost, skip if cold.
+      bars = safe_fetch { MarketDataService.send(:read_live_cache, "candle:#{sym}:1y") }
+      if bars.is_a?(Array) && bars.length >= 50
+        closes = bars.map { |b| (b[:close] || b['close']).to_f }
+        rsi    = Analytics::Indicators.latest(Analytics::Indicators.rsi(closes, period: 14))
+        sma200 = Analytics::Indicators.latest(Analytics::Indicators.sma(closes, 200))
+        last   = closes.last
+
+        if rsi
+          notes << "RSI #{rsi.round} — overbought" if rsi > 70
+          notes << "RSI #{rsi.round} — oversold"   if rsi < 30
+        end
+        if sma200 && last
+          notes << 'Below SMA 200 — downtrend' if last < sma200 * 0.98
+          notes << 'Above SMA 200 — uptrend'   if last > sma200 * 1.02
+        end
+      end
+
+      # Broker-side context (only when we have a snapshot row for this symbol)
+      if row[:broker_accounts] && row[:broker_accounts].any?
+        notes << "Held in #{row[:broker_accounts].join(' + ')}"
+      end
+      if row[:broker_pct_account] && row[:broker_pct_account].abs > 20.0
+        # Note: broker_pct_account is a percent (e.g. 39.80), not a decimal.
+        notes << "Broker concentration #{row[:broker_pct_account].round(1)}%"
+      end
+
+      row[:notes_extra] = notes.uniq
+    end
+    rows
   end
 
   # Sum across valuated rows. Rows missing market_value (provider failed) are

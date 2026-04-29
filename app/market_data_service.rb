@@ -140,13 +140,29 @@ class MarketDataService
         @cache.delete(k)
         @persistent_cache.delete(k)
         @cache_timestamps.delete(k)
-        
+
         # Delete hierarchical cache files
         type, sym, period = _parse_cache_key(k)
         delete_cache_entry(type, sym, period)
       end
       # If all live-cache entries are gone reset the global timestamp
       @cache_timestamp = nil if @cache.empty?
+      save_to_disk
+    end
+
+    # Narrower bust — only the candle (historical) keys for a symbol. Used by
+    # broker imports, which want to invalidate historicals without clobbering
+    # the quote cache they're about to prime, and without dropping
+    # analyst/profile caches that don't change just because a position did.
+    def bust_historical_for_symbol!(symbol)
+      YAHOO_RANGE_MAP.keys.each do |period|
+        key = "candle:#{symbol}:#{period}"
+        @cache.delete(key)
+        @persistent_cache.delete(key)
+        @cache_timestamps.delete(key)
+        type, sym, p = _parse_cache_key(key)
+        delete_cache_entry(type, sym, p)
+      end
       save_to_disk
     end
 
@@ -191,6 +207,21 @@ class MarketDataService
 
     def quote(symbol)
       fetch_quote(symbol)
+    end
+
+    # Seed the quote cache directly with externally-supplied data (e.g. a
+    # broker CSV import). Stores in both live and persistent caches so the
+    # next render is instant regardless of upstream provider state. Mirrors
+    # the Alpha-Vantage-style key shape used elsewhere.
+    def prime_quote!(symbol, price:, change_pct: nil, volume: 0)
+      sym = symbol.to_s.upcase
+      payload = {
+        '05. price'          => price.to_s,
+        '10. change percent' => change_pct.nil? ? '0%' : "#{change_pct}%",
+        '06. volume'         => volume.to_s
+      }
+      store_cache(sym, payload)
+      payload
     end
 
     def analyst_recommendations(symbol)

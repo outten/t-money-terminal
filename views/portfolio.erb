@@ -1,6 +1,40 @@
 <h2>Portfolio</h2>
 <p class="subtitle">Lot-based positions with live unrealized P&amp;L. Sells close shares FIFO and append to <a href="/trades">Trade History</a>.</p>
 
+<% if @import_count && @import_count > 0 %>
+  <div class="degradation-banner" role="status" style="background:#d1f0d1; color:#1d4620; border-color:#a3d8a3">
+    <strong>✓ Imported <%= @import_count %> position<%= @import_count == 1 ? '' : 's' %></strong> from Fidelity
+    <% if @import_file_date %>(<%= @import_file_date %>)<% end %>
+    <% if @import_skipped && @import_skipped > 0 %>· <%= @import_skipped %> non-position rows skipped<% end %>.
+    Lots replaced with broker average cost basis; quote cache primed.
+  </div>
+<% elsif params['imported_error'] %>
+  <div class="degradation-banner" role="alert">
+    <strong>Import failed:</strong> <%= params['imported_error'] %>
+  </div>
+<% end %>
+
+<section class="fidelity-import" aria-label="Broker import">
+  <form action="/portfolio/import/fidelity" method="post" class="fidelity-import-form">
+    <button type="submit" class="btn-primary">Import latest Fidelity export</button>
+    <span class="data-source">
+      <% if @latest_fidelity %>
+        Latest file: <code><%= File.basename(@latest_fidelity) %></code>
+      <% else %>
+        Drop a <code>Portfolio_Positions_*.csv</code> in <code>data/porfolio/fidelity/</code> first.
+      <% end %>
+      <% if @latest_snapshot %>
+        &middot; Last imported:
+        <strong><%= @latest_snapshot['file_date'] || @latest_snapshot['basename'] %></strong>
+        <% if @latest_snapshot['written_at'] %>
+          (<%= Time.parse(@latest_snapshot['written_at']).strftime('%Y-%m-%d %H:%M %Z') %>)
+        <% end %>
+        &middot; <%= (@latest_snapshot['positions'] || []).length %> positions in snapshot
+      <% end %>
+    </span>
+  </form>
+</section>
+
 <% if @rows.empty? %>
   <div class="notice">No open positions. Buy your first lot below.</div>
 <% else %>
@@ -46,6 +80,8 @@
         <th class="num">P&amp;L %</th>
         <th class="num">Day</th>
         <th class="num">Weight</th>
+        <th>Signal</th>
+        <th>Notes</th>
         <th class="num">Lots</th>
         <th></th>
       </tr>
@@ -68,6 +104,16 @@
           </td>
           <td class="num mono"><%= r[:day_change] || '—' %></td>
           <td class="num mono"><%= r[:weight] ? format_percent(r[:weight], digits: 1) : '—' %></td>
+          <td>
+            <span class="signal-badge signal-<%= (r[:recommendation] || 'HOLD').downcase %>">
+              <%= r[:recommendation] || 'HOLD' %>
+            </span>
+          </td>
+          <td class="muted">
+            <% (r[:notes_extra] || []).each_with_index do |n, i| %>
+              <%= '· ' if i > 0 %><%= n %>
+            <% end %>
+          </td>
           <td class="num mono">
             <button type="button" class="link-btn lot-toggle" data-target="lots-<%= r[:symbol] %>"
                     aria-expanded="false" title="Show / hide individual lots">
@@ -88,7 +134,7 @@
 
         <!-- Expandable lot detail row -->
         <tr id="lots-<%= r[:symbol] %>" class="lot-detail-row" hidden>
-          <td colspan="11">
+          <td colspan="13">
             <div class="lot-detail-wrap">
               <table class="lot-detail-table">
                 <thead>
