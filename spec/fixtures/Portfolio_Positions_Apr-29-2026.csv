@@ -1,0 +1,10 @@
+﻿Account Number,Account Name,Sleeve Name,Symbol,Description,Quantity,Last Price,Last Price Change,Current Value,Today's Gain/Loss Dollar,Today's Gain/Loss Percent,Total Gain/Loss Dollar,Total Gain/Loss Percent,Percent Of Account,Cost Basis Total,Average Cost Basis,Type
+X11111111,Individual - TOD,,SPAXX**,HELD IN MONEY MARKET,,,,$1000.00,,,,,5.00%,,,Cash,
+X11111111,Individual - TOD,,AAPL,APPLE INC,10,$200.00,+$1.00,$2000.00,+$10.00,+0.50%,+$500.00,+33.33%,10.00%,$1500.00,$150.00,Cash,
+X11111111,Individual - TOD,,NVDA,NVIDIA CORPORATION COM,5,$400.00,-$8.00,$2000.00,-$40.00,-1.96%,+$1500.00,+300.00%,10.00%,$500.00,$100.00,Cash,
+246222222,ROTH IRA,,AAPL,APPLE INC,5,$200.00,+$1.00,$1000.00,+$5.00,+0.50%,+$250.00,+33.33%,5.00%,$750.00,$150.00,Cash,
+246222222,ROTH IRA,,VOO,VANGUARD INDEX FUNDS S&P 500 ETF USD,2,$650.00,+$2.50,$1300.00,+$5.00,+0.39%,+$200.00,+18.18%,6.50%,$1100.00,$550.00,Cash,
+9999999999,Fidelity Crypto®,,USD***,US DOLLARS,,,,$0.00,,,,,--,,,Cash,
+Y00000000,Individual - TOD,,Pending activity,,,,,$50.00,,,,,,,,,
+"The data and information in this spreadsheet is provided to you solely for your use and is not for distribution."
+"Date downloaded Apr-29-2026 6:17 p.m ET"
