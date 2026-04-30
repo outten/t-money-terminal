@@ -1,9 +1,74 @@
 <h2>Cache Status</h2>
 <p class="subtitle">
   In-memory + disk cache state &mdash;
-  <a href="/admin/cache">refresh</a> &middot;
+  <a href="/admin/cache">refresh page</a> &middot;
   <a href="/admin/health">provider health</a>
 </p>
+
+<%
+  # Banner state from URL params + RefreshTracker.
+  refresh_running = @refresh_all_status && @refresh_all_status[:status] == 'running'
+  refresh_done    = @refresh_all_status && %w[completed failed].include?(@refresh_all_status[:status])
+%>
+
+<% if refresh_running %>
+  <%
+    s = @refresh_all_status
+    pct = (s[:total] && s[:total] > 0) ? (100.0 * s[:done] / s[:total]).round(1) : nil
+  %>
+  <div class="degradation-banner" role="status" style="background:#e3f0ff; color:#003566; border-color:#a3c8ff">
+    <strong>Refresh ALL in progress:</strong>
+    <%= s[:done] %> / <%= s[:total] || '?' %> symbols<%= pct ? " (#{pct}%)" : '' %>
+    <% if s[:last_symbol] %>· last: <code><%= s[:last_symbol] %></code><% end %>
+    <% if !s[:errors].empty? %>· <%= s[:errors].length %> errors<% end %>
+    &middot; <a href="/admin/cache">poll status</a> &middot;
+    <a href="/api/admin/refresh/status.json">json</a>
+  </div>
+<% elsif refresh_done %>
+  <%
+    s = @refresh_all_status
+    err_count = s[:errors].length
+  %>
+  <div class="degradation-banner" role="status" style="background:#d1f0d1; color:#1d4620; border-color:#a3d8a3">
+    <strong>✓ Refresh ALL <%= s[:status] %>.</strong>
+    <%= s[:done] %> / <%= s[:total] %> symbols processed
+    <% if err_count > 0 %>· <%= err_count %> per-symbol errors (see /admin/health)<% end %>.
+  </div>
+<% end %>
+
+<% if @refreshed_symbol %>
+  <div class="degradation-banner" role="status" style="background:#d1f0d1; color:#1d4620; border-color:#a3d8a3">
+    ✓ Refreshed <code><%= @refreshed_symbol %></code> (quote, analyst, profile, historical).
+  </div>
+<% end %>
+<% if @refresh_started %>
+  <div class="degradation-banner" role="status" style="background:#e3f0ff; color:#003566; border-color:#a3c8ff">
+    Refresh ALL kicked off in the background. Reload to see progress.
+  </div>
+<% end %>
+<% if @refresh_busy %>
+  <div class="degradation-banner" role="alert">
+    A refresh is already running — wait for it to complete before starting another.
+  </div>
+<% end %>
+
+<section class="admin-actions">
+  <form action="/admin/refresh/symbol" method="post" class="admin-action-form">
+    <label>Refresh one symbol:
+      <input type="text" name="symbol" required placeholder="AAPL" maxlength="10" autocomplete="off">
+    </label>
+    <button type="submit" class="refresh-btn">Refresh symbol</button>
+  </form>
+
+  <form action="/admin/refresh/all" method="post" class="admin-action-form">
+    <button type="submit" class="refresh-btn"
+            <% if refresh_running %>disabled aria-disabled="true"<% end %>
+            onclick="return confirm('Refresh ALL caches across the universe? Takes 30+ minutes for a typical portfolio (Polygon throttle is 13s/call).');">
+      <%= refresh_running ? 'Refresh ALL (running…)' : 'Refresh ALL caches' %>
+    </button>
+    <span class="data-source">Universe = REGIONS + portfolio + watchlist (currently <%= RefreshUniverse.symbols.length %> symbols)</span>
+  </form>
+</section>
 
 <% if @cache_entries.empty? %>
   <div class="notice">No cache entries found. The cache is empty &mdash; visit the dashboard to populate it.</div>
@@ -22,6 +87,7 @@
         <th>Cached At</th>
         <th>Status</th>
         <th>Size</th>
+        <th></th>
       </tr>
     </thead>
     <tbody>
@@ -31,7 +97,7 @@
           <td><span class="type-badge type-<%= entry[:type] %>"><%= entry[:type] %></span></td>
           <td>
             <% if entry[:symbol] %>
-              <% if MarketDataService::REGIONS.values.flatten.include?(entry[:symbol]) %>
+              <% if SymbolIndex.known?(entry[:symbol]) %>
                 <a href="/analysis/<%= entry[:symbol] %>"><%= entry[:symbol] %></a>
               <% else %>
                 <%= entry[:symbol] %>
@@ -56,6 +122,14 @@
             <% end %>
           </td>
           <td><%= entry[:size] %></td>
+          <td>
+            <% if entry[:symbol] && !entry[:symbol].empty? %>
+              <form action="/admin/refresh/symbol" method="post" style="margin:0">
+                <input type="hidden" name="symbol" value="<%= entry[:symbol] %>">
+                <button type="submit" class="link-btn" title="Bust + refetch every cache entry for this symbol">↻</button>
+              </form>
+            <% end %>
+          </td>
         </tr>
       <% end %>
     </tbody>

@@ -851,6 +851,33 @@ body.dark .lot-detail-table th, body.dark .lot-detail-table td { border-bottom-c
 body.dark .lot-detail-table th { color: #98989d; }
 body.dark .sell-form input { background: #1c1c1e; border-color: #3a3a3c; color: #f5f5f7; }
 
+.admin-actions {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 12px 0 18px;
+}
+.admin-action-form {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #f5f5f7;
+  border: 1px dashed #d1d1d6;
+  border-radius: 8px;
+  font-size: 0.88rem;
+}
+.admin-action-form input[type="text"] {
+  padding: 6px 8px;
+  border: 1px solid #d1d1d6;
+  border-radius: 5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  width: 110px;
+}
+.admin-action-form .data-source { margin: 0; font-size: 0.78rem; }
+body.dark .admin-action-form { background: #1c1c1e; border-color: #3a3a3c; color: #f5f5f7; }
+body.dark .admin-action-form input[type="text"] { background: #1c1c1e; border-color: #3a3a3c; color: #f5f5f7; }
+
 .fidelity-import {
   margin: 12px 0 16px;
   padding: 10px 14px;

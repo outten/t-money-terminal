@@ -24,6 +24,7 @@ Dotenv.load(
   File.expand_path('../.credentials', __dir__)
 )
 require 'market_data_service'
+require 'refresh_universe'
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -65,7 +66,11 @@ AV_SLEEP      = 15  # seconds between Alpha Vantage calls (≤5/min)
 FINNHUB_SLEEP =  2  # seconds between Finnhub calls      (≤60/min)
 HISTORICAL_PERIODS = %w[1d 1m 3m ytd 1y 5y].freeze
 
-all_symbols = MarketDataService::REGIONS.values.flatten.uniq
+# Universe = REGIONS ∪ PortfolioStore ∪ WatchlistStore ∪ SymbolIndex extensions.
+# Includes whatever the user has actually shown interest in (imports, watchlist,
+# discoveries) so we don't refresh just the 15 hardcoded REGIONS tickers and
+# leave the user's actual holdings stale.
+all_symbols = RefreshUniverse.symbols
 target_symbols = if ARGV.any?
                    unknown = ARGV.map(&:upcase) - all_symbols
                    unless unknown.empty?
@@ -87,8 +92,13 @@ puts
 puts "\e[1m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m"
 puts "\e[1m  T Money Terminal — Cache Refresh\e[0m"
 puts "\e[1m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m"
+user_added = target_symbols.select { |s| RefreshUniverse.user_added?(s) }
+region_added = target_symbols - user_added
+
 puts "  Started : #{Time.now.strftime('%Y-%m-%d %H:%M:%S %Z')}"
-puts "  Symbols : #{target_symbols.join(', ')}"
+puts "  Symbols : #{target_symbols.length} total"
+puts "    REGIONS  : #{region_added.join(', ')}" unless region_added.empty?
+puts "    user-added: #{user_added.join(', ')}"   unless user_added.empty?
 puts "  Cache   : #{MarketDataService::CACHE_DIR}"
 puts
 
