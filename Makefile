@@ -22,15 +22,22 @@ serve:
 test:
 	bundle exec rspec
 
+# Refresh quotes / analyst / profiles / historicals for the full universe:
+# REGIONS + portfolio + watchlist + extensions (i.e. every symbol the user
+# has shown interest in). Pass a list of tickers to refresh only those.
 refresh-cache:
 	bundle exec ruby scripts/refresh_cache.rb
 
-# Warm the new provider caches (FMP, FRED, News, Stooq)
+# Warm the provider caches (FMP fundamentals, FRED macro, Stooq indices,
+# Finnhub/NewsAPI news) over the same universe as refresh-cache.
 # Pass OPTS="--options" to also warm Polygon options chains (slow, 13s/call).
+# EDGAR is not refreshed here — no view consumes it yet.
 refresh-providers:
 	bundle exec ruby scripts/refresh_providers.rb $(OPTS)
 
-# Full warm-up: core market data + provider caches.
+# Full warm-up of every cache the app actually uses, over the user's full
+# symbol universe. Run this after a new Fidelity import (or nightly via cron)
+# so /portfolio + /analysis pages render without firing providers.
 refresh-all: refresh-cache refresh-providers
 
 # Refresh a single symbol: make refresh-symbol SYMBOL=AAPL

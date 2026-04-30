@@ -45,6 +45,7 @@ require 'symbol_index'
 require 'watchlist_store'
 require 'portfolio_store'
 require 'alerts_store'
+require 'refresh_universe'
 
 VALID_TIERS = %w[quotes fundamentals analyst macro alerts all].freeze
 
@@ -60,16 +61,13 @@ unless opts[:tier]
   exit 64
 end
 
-# Universe = REGIONS + curated + portfolio + watchlist (deduped, uppercase).
-# This is what the scheduler considers "interesting" — we don't refresh the
-# whole 50k-symbol world, only what the user actually looks at.
+# Single source of truth for the symbol set lives in RefreshUniverse.
+# Scheduler historically iterated `SymbolIndex.symbols + portfolio +
+# watchlist`, which transitively pulled in extensions + curated. Preserve
+# that behaviour here so an existing cron job's per-tick budget doesn't
+# silently shrink.
 def universe
-  (
-    MarketDataService::REGIONS.values.flatten +
-    SymbolIndex.symbols +
-    PortfolioStore.symbols +
-    WatchlistStore.read
-  ).map(&:upcase).uniq
+  RefreshUniverse.symbols(include_extensions: true, include_curated: true)
 end
 
 # US equities cash session: 09:30–16:00 ET, Mon–Fri. Approximate via UTC offset

@@ -17,6 +17,8 @@ require_relative 'trades_store'
 require_relative 'fidelity_importer'
 require_relative 'import_snapshot_store'
 require_relative 'portfolio_diff'
+require_relative 'refresh_universe'
+require_relative 'refresh_tracker'
 require_relative 'health_registry'
 require_relative 'correlation_store'
 
@@ -204,7 +206,75 @@ class TMoneyTerminal < Sinatra::Base
 
   get '/admin/cache' do
     @cache_entries = MarketDataService.cache_summary
+    @refresh_all_status = RefreshTracker.current('all')
+    @refreshed_symbol   = params['refreshed']
+    @refresh_started    = params['refresh_started']
+    @refresh_busy       = params['refresh_busy']
     erb :admin_cache
+  end
+
+  # Bust + refetch every cache for a single symbol (quote, analyst, profile,
+  # historicals). Synchronous — call returns when fresh data is on disk.
+  # Used by the per-row "Refresh" button on /admin/cache.
+  post '/admin/refresh/symbol' do
+    symbol = params['symbol'].to_s.strip.upcase
+    halt 400, 'symbol required' if symbol.empty?
+
+    MarketDataService.bust_cache_for_symbol!(symbol)
+    safe_fetch { MarketDataService.quote(symbol) }
+    safe_fetch { MarketDataService.analyst_recommendations(symbol) }
+    safe_fetch { MarketDataService.company_profile(symbol) }
+    safe_fetch { MarketDataService.historical(symbol, '1y') }
+
+    redirect "/admin/cache?refreshed=#{URI.encode_www_form_component(symbol)}", 302
+  end
+
+  # Background refresh-all: iterate the universe and rebuild every cache
+  # entry. Runs in a Thread because Polygon's 13s/call throttle means a
+  # ~500-symbol portfolio takes 30+ minutes. The /admin/cache view polls
+  # RefreshTracker.current('all') to render a progress banner.
+  post '/admin/refresh/all' do
+    if RefreshTracker.running?('all')
+      redirect '/admin/cache?refresh_busy=1', 302
+      return
+    end
+
+    symbols = RefreshUniverse.symbols
+    RefreshTracker.start!('all', total: symbols.length)
+
+    Thread.new do
+      Thread.current.name = 'refresh-all' if Thread.current.respond_to?(:name=)
+      Thread.current.report_on_exception = false if Thread.current.respond_to?(:report_on_exception=)
+      symbols.each do |sym|
+        begin
+          MarketDataService.bust_cache_for_symbol!(sym)
+          MarketDataService.quote(sym)
+          MarketDataService.analyst_recommendations(sym)
+          MarketDataService.company_profile(sym)
+          MarketDataService.historical(sym, '1y')
+        rescue StandardError => e
+          RefreshTracker.record_error('all', sym, "#{e.class}: #{e.message}")
+        ensure
+          RefreshTracker.tick('all', last_symbol: sym)
+        end
+      end
+      RefreshTracker.complete!('all', ok: true)
+    rescue StandardError => e
+      RefreshTracker.complete!('all', ok: false)
+      warn "[refresh-all] thread aborted: #{e.class}: #{e.message}" unless ENV['RACK_ENV'] == 'test'
+    end
+
+    redirect '/admin/cache?refresh_started=all', 302
+  end
+
+  get '/api/admin/refresh/status.json' do
+    content_type :json
+    job = RefreshTracker.current('all')
+    halt 404, { error: 'no refresh-all job' }.to_json unless job
+    job.merge(
+      started_at:   job[:started_at]&.iso8601,
+      completed_at: job[:completed_at]&.iso8601
+    ).to_json
   end
 
   get '/admin/health' do

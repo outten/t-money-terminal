@@ -2,8 +2,12 @@
 # scripts/refresh_providers.rb
 #
 # Warm the provider-module caches (FMP, FRED, News, Stooq, Polygon) that
-# back the new dashboard and analysis panels. Mirrors the style of
+# back the dashboard and analysis panels. Mirrors the style of
 # scripts/refresh_cache.rb and respects each provider's rate limits.
+#
+# EDGAR (filings) is intentionally NOT refreshed here — no view consumes
+# it today and warming it would burn SEC requests for data nothing reads.
+# Add a phase here if/when /analysis/:symbol grows a Filings panel.
 #
 # Usage:
 #   bundle exec ruby scripts/refresh_providers.rb            # all equity symbols
@@ -27,6 +31,7 @@ Dotenv.load(
 )
 require 'market_data_service'
 require 'providers'
+require 'refresh_universe'
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -62,8 +67,11 @@ end
 # ── Configuration ────────────────────────────────────────────────────────────
 
 include_options = ARGV.delete('--options') ? true : false
-all_symbols     = MarketDataService::REGIONS.values.flatten.uniq
-etf_symbols     = MarketDataService::SYMBOL_TYPES.keys
+
+# Universe = REGIONS ∪ portfolio ∪ watchlist ∪ extensions. Same source as
+# scripts/refresh_cache.rb — single helper so they can't drift apart.
+all_symbols = RefreshUniverse.symbols
+etf_symbols = MarketDataService::SYMBOL_TYPES.keys
 
 target_symbols = if ARGV.any?
                    unknown = ARGV.map(&:upcase) - all_symbols
@@ -80,6 +88,9 @@ if target_symbols.empty?
   exit 1
 end
 
+# An "equity" here is anything we don't know is an ETF — Fidelity-imported
+# tickers (FANUY, KLAC, CMCSA, etc.) get FMP fundamentals queries; the
+# four hardcoded ETFs (SPY/QQQ/EWJ/VGK) and any imported ETF type get skipped.
 equity_symbols = target_symbols - etf_symbols
 stooq_indices  = %i[sp500 nasdaq dow nikkei hang_seng dax ftse cac]
 

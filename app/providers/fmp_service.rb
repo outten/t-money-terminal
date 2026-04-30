@@ -1,3 +1,4 @@
+require 'fileutils'
 require_relative 'cache_store'
 require_relative 'http_client'
 
@@ -13,11 +14,13 @@ module Providers
   # Sign-up: https://site.financialmodelingprep.com/developer/docs
   # Env var: FMP_API_KEY
   module FmpService
-    BASE           = 'https://financialmodelingprep.com/stable'
-    NAMESPACE      = 'fmp'
-    CACHE_TTL      = 24 * 3600      # 24 h — fundamentals update slowly
-    EARNINGS_TTL   = 6 * 3600       # 6 h — calendar shifts within day
-    THROTTLE       = Throttle.new(0.5) # 0.5s polite floor; 250/day is the real cap
+    BASE              = 'https://financialmodelingprep.com/stable'
+    NAMESPACE         = 'fmp'
+    CACHE_TTL         = 24 * 3600      # 24 h — fundamentals update slowly
+    EARNINGS_TTL      = 6 * 3600       # 6 h — calendar shifts within day
+    PAYWALL_TTL       = 24 * 3600      # re-test paywalled symbols once a day
+    PAYWALLED_DIR     = '_paywalled_'  # subdir of NAMESPACE for tombstone files
+    THROTTLE          = Throttle.new(0.5) # 0.5s polite floor; 250/day is the real cap
 
     module_function
 
@@ -138,10 +141,47 @@ module Providers
       symbolize(data)
     end
 
+    # Has this symbol been recorded as paywalled within PAYWALL_TTL? FMP's
+    # free tier whitelists a small set of large-cap US symbols; everything
+    # else (ADRs, mutual funds, most ETFs) returns HTTP 402 with the message
+    # "This value set for 'symbol' is not available under your current
+    # subscription". Without a tombstone, /analysis renders for those tickers
+    # would re-issue 402s on every visit and pollute the FMP health metric.
+    def paywalled?(symbol)
+      return false if test_env?
+      return false if symbol.nil? || symbol.to_s.empty?
+      path = paywall_path(symbol)
+      return false unless File.exist?(path)
+      (Time.now - File.mtime(path)) < PAYWALL_TTL
+    rescue StandardError
+      false
+    end
+
+    def mark_paywalled!(symbol)
+      return if test_env?
+      return if symbol.nil? || symbol.to_s.empty?
+      path = paywall_path(symbol)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, Time.now.utc.iso8601)
+    rescue StandardError => e
+      warn "[FmpService] failed to write paywall tombstone for #{symbol}: #{e.message}"
+    end
+
+    def paywall_path(symbol)
+      File.join(CacheStore::CACHE_ROOT, NAMESPACE, PAYWALLED_DIR, "#{symbol.to_s.upcase}.txt")
+    end
+
     def request(path, **params)
       api_key = ENV['FMP_API_KEY']
       unless api_key && !api_key.empty?
         warn '[FmpService] FMP_API_KEY not set — skipping call' unless test_env?
+        return nil
+      end
+
+      # Short-circuit for symbols we already know are paywalled. Skips the
+      # HTTP call entirely (no health-registry hit, no rate-limit charge).
+      symbol_arg = params[:symbol] || params['symbol']
+      if symbol_arg && paywalled?(symbol_arg)
         return nil
       end
 
@@ -153,6 +193,16 @@ module Providers
 
       if status == 429
         warn '[FmpService] Rate limited (429)' unless test_env?
+        return nil
+      end
+      if status == 402
+        # Symbol-level paywall — record so the next render doesn't re-ask.
+        if symbol_arg
+          mark_paywalled!(symbol_arg)
+          warn "[FmpService] #{symbol_arg} not covered on free tier — 24h tombstone written" unless test_env?
+        else
+          warn "[FmpService] 402 on #{path} (no symbol param to tombstone)" unless test_env?
+        end
         return nil
       end
       unless status.between?(200, 299)
