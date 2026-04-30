@@ -256,6 +256,16 @@ class MarketDataService
       fetch_analyst_recommendations(symbol)
     end
 
+    # Network-free read of the analyst cache. Returns the cached hash if
+    # present (live or persistent), nil otherwise. Used by /portfolio so
+    # signal_for can render BUY/HOLD/SELL pills without firing a Finnhub
+    # request per row. The import + scheduler are the network events; page
+    # renders are read-only.
+    def analyst_cached(symbol)
+      key = "analyst:#{symbol}"
+      read_live_cache(key) || @persistent_cache[key]
+    end
+
     def company_profile(symbol)
       fetch_company_profile(symbol)
     end
@@ -1316,7 +1326,14 @@ class MarketDataService
         raw_stamps = payload['timestamps'] || {}
 
         raw_cache.each do |k, v|
-          @persistent_cache[k] = deserialize_value(k, v)
+          value = deserialize_value(k, v)
+          @persistent_cache[k] = value
+          # Also seed the live cache so read_live_cache can serve from disk
+          # immediately after a process restart. cache_entry_fresh? still
+          # gates by timestamp, so stale entries get discarded on first read
+          # rather than served — but fresh ones avoid an unnecessary network
+          # round-trip on every /portfolio view post-restart.
+          @cache[k] = value
         end
         raw_stamps.each do |k, ts|
           @cache_timestamps[k] = ts ? Time.parse(ts) : nil

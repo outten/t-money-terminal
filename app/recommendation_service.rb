@@ -11,14 +11,22 @@ class RecommendationService
   BUY_THRESHOLD  =  0.5
   SELL_THRESHOLD = -0.5
 
-  def self.signal_for(symbol)
-    signal_detail(symbol)[:signal]
+  # `cached_only: true` makes this a strictly cache-only read — never fires
+  # a Finnhub request for analyst data and never reaches a live provider for
+  # the quote fallback (relies on whatever's already in the in-memory cache).
+  # Use on hot paths like /portfolio where N rows × N network calls would
+  # blow up page-render time.
+  def self.signal_for(symbol, cached_only: false)
+    signal_detail(symbol, cached_only: cached_only)[:signal]
   rescue StandardError
     'HOLD'
   end
 
-  def self.signal_detail(symbol)
-    analyst = MarketDataService.analyst_recommendations(symbol)
+  def self.signal_detail(symbol, cached_only: false)
+    analyst = cached_only \
+      ? MarketDataService.analyst_cached(symbol) \
+      : MarketDataService.analyst_recommendations(symbol)
+
     if analyst && analyst_has_data?(analyst)
       score  = analyst_score(analyst)
       signal = score_to_signal(score)
