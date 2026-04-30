@@ -4,6 +4,7 @@ require_relative 'symbol_index'
 require_relative 'portfolio_store'
 require_relative 'market_data_service'
 require_relative 'import_snapshot_store'
+require_relative 'historical_prefetcher'
 
 # FidelityImporter — parse a Fidelity Portfolio_Positions CSV and reconcile
 # it into PortfolioStore.
@@ -255,6 +256,15 @@ module FidelityImporter
       data:     snapshot_payload
     )
     summary[:snapshot_path] = saved['path']
+
+    # Background prefetch of 1-year historical bars for every imported
+    # symbol so the user's first /analysis click renders instantly. The
+    # thread serialises through Providers::Throttle and respects each
+    # provider's rate limit; per-symbol failures are logged and swallowed.
+    # No-op in test env (set HISTORICAL_PREFETCH=1 to exercise it).
+    symbols_to_prefetch = parsed[:positions].map { |p| p[:symbol] }
+    thread = HistoricalPrefetcher.prefetch_async(symbols_to_prefetch)
+    summary[:prefetch_started] = thread ? symbols_to_prefetch.length : 0
 
     summary
   end

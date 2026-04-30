@@ -6,7 +6,9 @@
     <strong>✓ Imported <%= @import_count %> position<%= @import_count == 1 ? '' : 's' %></strong> from Fidelity
     <% if @import_file_date %>(<%= @import_file_date %>)<% end %>
     <% if @import_skipped && @import_skipped > 0 %>· <%= @import_skipped %> non-position rows skipped<% end %>.
-    Lots replaced with broker average cost basis; quote cache primed.
+    Lots replaced with broker average cost basis; quote cache primed<% if @import_prefetch && @import_prefetch > 0 %>;
+    historicals prefetching for <%= @import_prefetch %> symbol<%= @import_prefetch == 1 ? '' : 's' %>
+    in the background (<a href="/admin/health">progress</a>)<% end %>.
   </div>
 <% elsif params['imported_error'] %>
   <div class="degradation-banner" role="alert">

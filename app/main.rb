@@ -317,6 +317,7 @@ class TMoneyTerminal < Sinatra::Base
     @import_count     = params['imported_count']&.to_i
     @import_file_date = params['imported_file']
     @import_skipped   = params['imported_skipped']&.to_i
+    @import_prefetch  = params['prefetch_started']&.to_i
     @latest_fidelity  = FidelityImporter.latest_file_in
     erb :portfolio
   end
@@ -424,7 +425,8 @@ class TMoneyTerminal < Sinatra::Base
       summary = FidelityImporter.import!
       qs = "imported_count=#{summary[:imported]}" \
            "&imported_file=#{summary[:file_date]&.iso8601}" \
-           "&imported_skipped=#{summary[:skipped].length}"
+           "&imported_skipped=#{summary[:skipped].length}" \
+           "&prefetch_started=#{summary[:prefetch_started] || 0}"
       redirect "/portfolio?#{qs}", 302
     rescue StandardError => e
       warn "[fidelity import] #{e.class}: #{e.message}" unless ENV['RACK_ENV'] == 'test'
