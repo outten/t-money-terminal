@@ -32,7 +32,9 @@ class RecommendationService
       signal = score_to_signal(score)
       { signal: signal, signal_type: 'Analyst Consensus', analyst: analyst, score: score.round(3) }
     else
-      data   = MarketDataService.quote(symbol)
+      data   = cached_only \
+        ? (MarketDataService.quote_cached(symbol) || {}) \
+        : MarketDataService.quote(symbol)
       change = (data['10. change percent'] || data[:change] || '0%').to_f
       signal = change > 1.0 ? 'BUY' : change < -1.0 ? 'SELL' : 'HOLD'
       { signal: signal, signal_type: 'Momentum Signal', analyst: nil, score: nil }

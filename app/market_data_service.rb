@@ -237,6 +237,20 @@ class MarketDataService
       fetch_quote(symbol)
     end
 
+    # Strictly cache-only quote read — no TTL gating, no provider waterfall.
+    # Returns the freshest available cached value: live cache first (regardless
+    # of age), persistent cache next, then the latest broker import snapshot.
+    # Returns nil only if the symbol has never been quoted or imported.
+    #
+    # Used by hot render paths (e.g. /portfolio) that should never trigger
+    # a network round-trip. The contract: imports + the scheduler + the
+    # explicit /analysis :symbol view are the only network events; page
+    # renders display whatever was cached at the last update.
+    def quote_cached(symbol)
+      sym = symbol.to_s
+      @cache[sym] || @persistent_cache[sym] || build_quote_from_snapshot(sym)
+    end
+
     # Seed the quote cache directly with externally-supplied data (e.g. a
     # broker CSV import). Stores in both live and persistent caches so the
     # next render is instant regardless of upstream provider state. Mirrors

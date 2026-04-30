@@ -888,12 +888,17 @@ class TMoneyTerminal < Sinatra::Base
   end
 
   # Valuate an aggregated position (from PortfolioStore.positions) against
-  # the live quote. Adds derived fields: current_price, cost_value, market_value,
-  # unrealized_pl ($), unrealized_pl_pct, day_change.
-  # Missing/failed quotes still return the entry with current_price: nil.
+  # the cached quote. Adds derived fields: current_price, cost_value,
+  # market_value, unrealized_pl ($), unrealized_pl_pct, day_change.
+  # Missing quotes still return the entry with current_price: nil.
+  #
+  # Uses the strictly cache-only quote read (`quote_cached`) — `/portfolio`
+  # and `/analysis/:symbol` rendering must NEVER fire a provider call. The
+  # broker import is the canonical refresh event; page views just display
+  # what was cached at the last update.
   def valuate_position(p)
     sym   = p[:symbol]
-    quote = safe_fetch { MarketDataService.quote(sym) } || {}
+    quote = safe_fetch { MarketDataService.quote_cached(sym) } || {}
     price = (quote['05. price'] || quote[:price]).to_f
 
     cost_value      = (p[:shares].to_f * p[:cost_basis].to_f).round(2)
