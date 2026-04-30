@@ -942,8 +942,10 @@ class TMoneyTerminal < Sinatra::Base
     rows.each do |row|
       sym = row[:symbol]
 
-      # Existing momentum signal — same path the dashboard uses.
-      row[:recommendation] = safe_fetch { RecommendationService.signal_for(sym) } || 'HOLD'
+      # Cached-only signal: /portfolio renders for every page view. We don't
+      # want to fan out N Finnhub calls for analyst recs on each render —
+      # the import + scheduler are the network events, the page is read-only.
+      row[:recommendation] = safe_fetch { RecommendationService.signal_for(sym, cached_only: true) } || 'HOLD'
 
       notes = []
       pct_of_value = (totals[:market_value].to_f.positive? && row[:market_value]) \
