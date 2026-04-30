@@ -164,6 +164,22 @@ RSpec.describe 'Fidelity broker import' do
       expect(TradesStore.read).to be_empty
     end
 
+    it 'reports prefetch_started: 0 in test env (background prefetch is opt-in)' do
+      summary = FidelityImporter.import!
+      expect(summary[:prefetch_started]).to eq(0)
+    end
+
+    it 'fires HistoricalPrefetcher.prefetch_async with every imported symbol' do
+      received = nil
+      allow(HistoricalPrefetcher).to receive(:prefetch_async) do |symbols|
+        received = symbols
+        Thread.new {} # mimic non-nil return so summary counts
+      end
+      summary = FidelityImporter.import!
+      expect(received).to match_array(%w[AAPL NVDA VOO])
+      expect(summary[:prefetch_started]).to eq(3)
+    end
+
     it 'raises when no Fidelity CSV is present' do
       FileUtils.rm_rf(ENV['FIDELITY_IMPORT_DIR'])
       expect { FidelityImporter.import! }.to raise_error(/No Fidelity CSV/)
@@ -179,6 +195,7 @@ RSpec.describe 'Fidelity broker import' do
       expect(last_response.location).to include('/portfolio?')
       expect(last_response.location).to include('imported_count=3')
       expect(last_response.location).to include('imported_file=2026-04-29')
+      expect(last_response.location).to include('prefetch_started=0') # test env: prefetch off
     end
 
     it 'redirects with imported_error= when no CSV is found' do
