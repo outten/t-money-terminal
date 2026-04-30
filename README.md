@@ -1,46 +1,81 @@
 # T Money Terminal
 
-A self-hosted, open-source investment terminal inspired by the Bloomberg Terminal — built with Ruby and Sinatra, powered entirely by **free-tier APIs**. All data is cached on disk with a 1-hour TTL and a persistent fallback layer so pages keep rendering when upstreams throttle.
+A self-hosted, open-source investment terminal inspired by the Bloomberg Terminal — Ruby + Sinatra, powered entirely by **free-tier APIs**. The contract: **the broker import is the only refresh event**, page renders are read-only against an aggressive on-disk cache. Pages stay fast even when upstreams throttle, paywall, or fail entirely.
 
 ---
 
 ## What it does
 
-**Market data (waterfall, free tier)**
-Quotes and historical OHLCV are fetched through a provider waterfall so any single outage or rate-limit is survivable:
+### Market data — provider waterfall, free tier
 
-- Quotes: Tiingo → Alpha Vantage → Finnhub → Yahoo
-- Historical: Yahoo → Finnhub candles → Tiingo → Alpha Vantage (weekly)
-- Analyst consensus & company profiles: Finnhub
-- Hardcoded profiles for the four tracked ETFs (SPY, QQQ, EWJ, VGK)
+Every quote / historical fetch tries each provider in order and falls back on failure or rate-limit. With your keys set, your IP is throttle-resilient against any single source.
 
-**Deeper data providers** ([app/providers/](app/providers/))
+| Layer | Order | Notes |
+|---|---|---|
+| **Quotes** | Tiingo → Alpha Vantage → Finnhub → Yahoo | First non-empty wins; rate-limit cooldowns are observed per-provider |
+| **Historical OHLCV** | Yahoo → FMP → **Polygon** → Finnhub → Tiingo → AV-weekly | Polygon was added because FMP free tier paywalls per-symbol; covers ADRs and small-caps Yahoo throttles |
+| **Analyst consensus** | Finnhub | Cached aggressively (`/portfolio` reads cache-only) |
+| **Company profiles** | Finnhub for stocks; hardcoded `ETF_PROFILES` for SPY/QQQ/EWJ/VGK | |
+
+### Deeper data ([app/providers/](app/providers/))
 
 | Provider | Used for | Free tier |
 |---|---|---|
-| Financial Modeling Prep (FMP) | Key ratios, DCF, earnings calendar, key metrics | 250/day |
-| Polygon.io | Options chains, IV, open interest | 5/min |
+| Financial Modeling Prep (FMP) | Key ratios, DCF, earnings calendar, key metrics, historical fallback | 250/day; **per-symbol whitelist** — see CREDENTIALS.md |
+| Polygon.io | Daily aggregates, options chains, IV, open interest | 5/min |
 | FRED | Fed funds, 3M/10Y treasury, CPI, unemployment, VIX | unlimited |
-| Finnhub News + NewsAPI | Per-symbol headlines | 60/min / 100/day |
+| Finnhub News + NewsAPI | Per-symbol headlines | 60/min and 100/day |
 | Stooq | Nikkei, Hang Seng, DAX, FTSE, CAC, S&P 500, Nasdaq, Dow | none required |
-| SEC EDGAR | Latest 10-K / 10-Q / 8-K filings | none required (UA header) |
+| SEC EDGAR | Latest 10-K / 10-Q / 8-K filings | none required (UA header) — currently wired but no view consumes it |
 
-**Pure-Ruby analytics** ([app/analytics/](app/analytics/), zero API cost — runs off cached bars)
+### Pure-Ruby analytics ([app/analytics/](app/analytics/))
+
+Zero API cost — runs off cached bars.
 
 - [indicators.rb](app/analytics/indicators.rb) — SMA, EMA, MACD, RSI (Wilder), Bollinger Bands
-- [risk.rb](app/analytics/risk.rb) — annualized return & vol, Sharpe, Sortino, max drawdown, historical & parametric VaR, beta, correlation, date alignment
+- [risk.rb](app/analytics/risk.rb) — annualized return + vol, Sharpe, Sortino, max drawdown, historical + parametric VaR, beta, **correlation matrix**, date alignment (uses dividend-adjusted close when available)
 - [black_scholes.rb](app/analytics/black_scholes.rb) — European price, full Greeks (Δ/Γ/Vega/Θ/ρ), implied vol (bisection), historical vol
 
-**Charting**
-TradingView [lightweight-charts](https://www.tradingview.com/lightweight-charts/) (CDN, MIT) with four synchronized panes — price (candles + SMA 20/50/200 + Bollinger), volume histogram coloured by candle direction, RSI(14) with 30/70 reference lines, and MACD(12/26/9) line + signal + histogram. Crosshair OHLCV readout, period toggle (1d / 1m / 3m / YTD / 1y / 5y), log-scale toggle, dark-mode palette swap.
+### Charting
 
-**Productivity**
+TradingView [lightweight-charts](https://www.tradingview.com/lightweight-charts/) (CDN, MIT) — four equal-height synchronized panes (price + SMA 20/50/200 + Bollinger, volume coloured by candle direction, RSI(14) with 30/70 reference lines, MACD(12/26/9) line + signal + histogram). Crosshair OHLCV readout, period toggle (1d / 1m / 3m / YTD / 1y / 5y), log-scale toggle, dark-mode palette swap.
 
-- **Universal search** — type-ahead over ~55 curated symbols (every region ticker plus large-cap US names and sector ETFs), keyboard navigable (↑ ↓ Enter Esc).
-- **Watchlist** — server-persisted to `data/watchlist.json` (atomic write + mutex), rendered with live quotes on the dashboard and a ☆/★ toggle on `/analysis/:symbol`.
-- **Price alerts** — threshold alerts persisted to `data/alerts.json`. `make check-alerts` evaluates every active alert (cron-friendly: `*/15 9-16 * * 1-5`) and appends triggered ones to `data/alerts_triggered.log`.
-- **Compare mode** — `/compare?symbols=AAPL,MSFT,GOOGL&period=1y` renders a rebased-to-100 multi-symbol performance chart (up to 6 symbols).
-- **CSV export** — `/api/export/:symbol/:period.csv` returns OHLCV plus the full indicator series.
+### Portfolio (multi-lot, FIFO)
+
+- [PortfolioStore](app/portfolio_store.rb) — every BUY creates a new lot with its own cost basis and acquired_at; aggregated views sum across lots with weighted-average cost and a per-lot drill-down
+- **FIFO close** on SELL — `close_shares_fifo` walks open lots oldest-first, splits the last one if partially closed, returns the realized-P&L breakdown per closed lot
+- [TradesStore](app/trades_store.rb) — append-only history at `data/trades.json`; YTD + lifetime realized-P&L cards
+- **Drift view** at `/portfolio/drift` — what changed between your two most recent broker imports (added / removed / scaled, sorted biggest-mover-first)
+
+### Broker import (Fidelity)
+
+Drop a `Portfolio_Positions_<Mmm>-<DD>-<YYYY>.csv` in `data/porfolio/fidelity/` (Fidelity's typo, kept), click **Import latest Fidelity export** on `/portfolio`, and:
+
+1. Lots in PortfolioStore are replaced with the broker's per-symbol average cost basis (manual entries for symbols *not* in the file are preserved)
+2. Unknown tickers register as `SymbolIndex` extensions so `/analysis/:symbol` resolves
+3. Quote cache is primed from the file's Last Price (page renders without firing providers)
+4. Historical cache is busted for affected symbols and re-fetched in a **background thread** so `/analysis/:symbol` is instant on first click
+5. The full parsed payload is persisted as a snapshot at `data/imports/fidelity/<basename>.json` for audit + drift comparison
+
+### Productivity
+
+- **Universal search** — type-ahead over the curated universe, auto-discovery for unknown tickers (`POST /api/symbols/discover` adds them as extensions)
+- **Watchlist** — server-persisted to `data/watchlist.json`; live quotes on dashboard + ☆/★ toggle on `/analysis/:symbol`
+- **Price alerts** — threshold alerts at `data/alerts.json`; `make check-alerts` evaluates and dispatches via configured Notifiers (webhook, ntfy.sh, SMTP)
+- **Compare mode** — `/compare?symbols=AAPL,MSFT,GOOGL&period=1y`, rebased to 100 (≤ 6 symbols)
+- **Correlation heatmap** — `/correlations` page; HTML-table render with diverging red/white/green colormap
+- **CSV export** — `/api/export/:symbol/:period.csv` returns OHLCV + every indicator series for the chart's currently-displayed period
+
+### Caching contract
+
+The cache is the source of truth for page rendering:
+
+- `MarketDataService.quote_cached(symbol)` — strict TTL-bypassing read used by `/portfolio`. Layered fallback: `@cache → @persistent_cache → broker snapshot → nil`. Never fires a provider call on render.
+- **Market-aware TTL** — 1 h during US market hours (M–F 09:30–16:00 ET), **12 h** when closed. A Friday-close prime stays valid all weekend.
+- **FMP paywall tombstone** — on HTTP 402 we write a 24 h tombstone at `data/cache/fmp/_paywalled_/<SYM>.txt`; future requests for that symbol short-circuit before HTTP. Re-tested daily.
+- **`load_from_disk`** seeds both `@cache` and `@persistent_cache`, so quotes survive process restarts (rerun reload, Puma recycle).
+
+The only network events are: explicit imports, the scheduler (`make scheduler`), the `/admin/refresh/*` buttons, and first-view `/analysis/:symbol` for symbols not yet in cache. **Page renders never fan out.**
 
 ---
 
@@ -48,33 +83,34 @@ TradingView [lightweight-charts](https://www.tradingview.com/lightweight-charts/
 
 | Page | URL |
 |---|---|
-| Dashboard (summary + macro + intl. indices + watchlist + upcoming earnings) | `/dashboard` |
+| Dashboard (regions + macro + intl. indices + watchlist + upcoming earnings + provider-degradation banner) | `/dashboard` |
 | Region (US / Japan / Europe) | `/region/us`, `/region/japan`, `/region/europe` |
-| Per-symbol analysis (fundamentals, DCF, news, candles, analytics, alerts) | `/analysis/:symbol` |
+| Per-symbol analysis (fundamentals, DCF, news, candles, analytics, position widget, alerts) | `/analysis/:symbol` |
+| Portfolio (multi-lot, signals, notes, broker import) | `/portfolio` |
+| Trade history (BUY/SELL log + realized P&L YTD / lifetime) | `/trades` |
+| Portfolio drift (snapshot diff) | `/portfolio/drift` |
 | Multi-symbol rebased compare | `/compare` |
-| Cache admin | `/admin/cache` |
+| Pairwise correlation heatmap | `/correlations` |
+| Cache admin (per-row + Refresh-ALL buttons) | `/admin/cache` |
+| Provider health (success rate, error reasons, latency per provider) | `/admin/health` |
 
 ---
 
 ## Getting started
 
 ### Prerequisites
-- Ruby ≥ 3.0 and Bundler
+- Ruby ≥ 3.4 (`.ruby-version` pinned to 3.4.1) and Bundler
 
-### Install & run
+### Install + run
 
 ```bash
 git clone <repo-url>
 cd t-money-terminal
 make install
-make run              # auto-reload on file changes → http://localhost:4567
+make run                   # auto-reload on file changes → http://localhost:4567
 ```
 
-`make run` and `make dev` are aliases — both launch under `rerun`, which
-restarts the server whenever a Ruby/ERB/JS/CSS file changes under `app/`,
-`views/`, `public/`, or `scripts/`. Watch/ignore patterns live in
-[.rerun](.rerun) (cache writes under `data/` are ignored so the server doesn't
-thrash). Use `make serve` for a one-shot run with no auto-reload.
+`make run` and `make dev` are aliases — both launch under `rerun`, which restarts on edits to `app/`, `views/`, `public/`, `scripts/`. Watch / ignore patterns live in [.rerun](.rerun) (cache writes under `data/` are ignored). Use `make serve` for a one-shot run with no auto-reload.
 
 ### Credentials
 
@@ -87,27 +123,33 @@ ALPHA_VANTAGE_API_KEY=...
 FINNHUB_API_KEY=...
 
 # Deeper data
-FMP_API_KEY=...          # https://site.financialmodelingprep.com/developer/docs  (250/day)
-POLYGON_API_KEY=...      # https://polygon.io/                                    (5/min)
-FRED_API_KEY=...         # https://fred.stlouisfed.org/docs/api/api_key.html      (unlimited)
-NEWSAPI_KEY=...          # https://newsapi.org/register                           (100/day; optional fallback)
+FMP_API_KEY=...           # https://site.financialmodelingprep.com/developer/docs  (250/day; per-symbol whitelist)
+POLYGON_API_KEY=...       # https://polygon.io/                                    (5/min)
+FRED_API_KEY=...          # https://fred.stlouisfed.org/docs/api/api_key.html      (unlimited)
+NEWSAPI_KEY=...           # https://newsapi.org/register                           (100/day; optional fallback to Finnhub)
+
+# Alert delivery (optional — pick any one)
+ALERT_WEBHOOK_URL=...     # POST JSON
+ALERT_NTFY_TOPIC=...      # ntfy.sh topic
+ALERT_EMAIL_TO=...        # plus ALERT_SMTP_HOST / USER / PASS / FROM
 ```
 
-See [CREDENTIALS.md](CREDENTIALS.md) for signup walkthroughs.
+See [CREDENTIALS.md](CREDENTIALS.md) for signup walkthroughs and the FMP free-tier paywall behaviour.
 
 ### Common tasks
 
 ```bash
-make test                        # RSpec suite (138 examples)
-make refresh-cache               # Warm market-data cache (respects rate limits)
+make test                        # RSpec suite (currently 334 examples)
+make refresh-cache               # Warm market-data cache for the universe
 make refresh-providers           # Warm FMP / FRED / News / Stooq caches
-make refresh-all                 # Both of the above in one shot
+make refresh-all                 # Both, in one shot — REGIONS ∪ portfolio ∪ watchlist
 make refresh-symbol SYMBOL=AAPL  # Warm a single symbol end-to-end
+make scheduler TIER=quotes       # Tiered cache refresh (quotes/fundamentals/analyst/macro/alerts/all)
 make cache-status                # Report cache age / staleness
-make check-alerts                # Evaluate active price alerts (cron-friendly)
+make check-alerts                # Evaluate active price alerts; dispatch via Notifiers
 ```
 
-The UI also has **Refresh** buttons on every page that bust the relevant slice of the cache without leaving the browser.
+The `/admin/cache` page also has interactive buttons: **Refresh one symbol** (synchronous), **Refresh ALL caches** (background thread with live progress banner), and a per-row ↻ button on every cache entry.
 
 ---
 
@@ -115,19 +157,30 @@ The UI also has **Refresh** buttons on every page that bust the relevant slice o
 
 ```
 app/
-  main.rb                     # Sinatra routes
-  market_data_service.rb      # Provider waterfall + hierarchical cache
-  recommendation_service.rb   # Buy/Sell/Hold signal logic
-  providers/                  # FMP, Polygon, FRED, News, Stooq, EDGAR + shared cache/throttle
+  main.rb                     # Sinatra routes (TMoneyTerminal class)
+  market_data_service.rb      # Provider waterfall + hierarchical cache + market-aware TTL + quote_cached
+  recommendation_service.rb   # BUY/HOLD/SELL signal — analyst-aware, with cached_only mode for /portfolio
+  providers/                  # FMP, Polygon, FRED, News, Stooq, EDGAR + shared cache_store / throttle / http_client
   analytics/                  # Indicators, risk, Black-Scholes (pure Ruby)
-  symbol_index.rb             # Search universe
-  watchlist_store.rb          # File-backed watchlist
-  alerts_store.rb             # File-backed alerts
-views/                        # ERB templates (shared layout)
-public/                       # style.css, app.js (chart), features.js (search/watchlist/alerts)
-scripts/                      # refresh_cache, refresh_providers, cache_status, check_alerts
-spec/                         # RSpec (app, services, providers, analytics, section4)
-data/cache/                   # Hierarchical 1-hour TTL disk cache
+  symbol_index.rb             # Curated + REGIONS + runtime extension store; ticker-pattern guard
+  portfolio_store.rb          # Multi-lot positions; FIFO close
+  trades_store.rb             # Append-only trade history
+  fidelity_importer.rb        # Broker CSV parser + reconciliation orchestrator
+  import_snapshot_store.rb    # Per-source snapshot persistence (audit + drift)
+  portfolio_diff.rb           # Snapshot-to-snapshot diff math
+  refresh_universe.rb         # Single source of truth: REGIONS ∪ portfolio ∪ watchlist
+  refresh_tracker.rb          # In-memory job tracker for background refreshes
+  historical_prefetcher.rb    # Async prefetch on import
+  health_registry.rb          # Per-provider success/error/latency observations
+  watchlist_store.rb / alerts_store.rb / notifiers.rb / correlation_store.rb
+views/                        # ERB templates with shared layout
+public/                       # style.css, app.js (chart), features.js (search/watchlist/alerts/portfolio)
+scripts/                      # refresh_cache, refresh_providers, scheduler, check_alerts, cache_status
+spec/                         # RSpec — 334 examples across 13 spec files
+data/cache/                   # Hierarchical disk cache
+data/imports/                 # Broker import snapshots (audit + drift)
+data/porfolio/fidelity/       # Drop your Fidelity Portfolio_Positions_*.csv here
+.github/workflows/ci.yml      # GitHub Actions — RSpec + scripts syntax check on every PR
 ```
 
 ---

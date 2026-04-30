@@ -1,54 +1,41 @@
-# Developer Guide: T Money Terminal
+# Developer Guide
 
-## Project Structure
-```
-app/
-  main.rb                  # Sinatra routes
-  market_data_service.rb   # Alpha Vantage + 24h cache + mock fallback
-  recommendation_service.rb # Buy/Sell/Hold signal logic
-views/
-  layout.erb               # Shared layout, nav, footer
-  dashboard.erb            # Global summary
-  us_markets.erb           # US page
-  japan_markets.erb        # Japan proxy (EWJ)
-  europe_markets.erb       # Europe proxy (VGK)
-  recommendations.erb      # Signals table
-public/
-  style.css                # Apple-inspired design, dark mode
-  app.js                   # Chart helpers, theme toggle
-scripts/
-  refresh_cache.rb         # Manually bust the 24h data cache
-spec/
-  app_spec.rb              # Route smoke tests
-  services_spec.rb         # Unit tests for services
-Makefile                   # install / run / test / refresh-cache
-```
+This file is kept as a stable entry point for contributors looking for a
+"developer guide" doc. The actual content has consolidated into:
 
-## Setup
+- **[AGENTS.md](AGENTS.md)** — architecture, caching contract, store inventory,
+  provider waterfall, common gotchas, project structure, testing notes.
+- **[README.md](README.md)** — feature surface, page list, getting started.
+- **[CREDENTIALS.md](CREDENTIALS.md)** — API keys, env vars, FMP free-tier
+  paywall behaviour, alert-delivery configuration.
+- **[Instructions.md](Instructions.md)** — user-facing how-to (running, importing
+  Fidelity exports, refreshing caches, alerts).
+- **[TODO.md](TODO.md)** — roadmap (shipped + open + dropped).
+
+Start with [AGENTS.md](AGENTS.md) if you're modifying code; everything load-bearing
+about how the cache contract, provider waterfall, and store conventions work
+lives there.
+
+## Quick reference
+
 ```bash
-make install   # bundle install
-make run       # start on http://localhost:4567
-make test      # run RSpec suite
-make refresh-cache  # bust data cache on next request
+make install                      # bundle install
+make run                          # dev server with rerun auto-reload
+make test                         # 334 examples (RSpec)
+make refresh-all                  # warm every cache for the symbol universe
+make scheduler TIER=quotes        # tiered cache refresh
+make check-alerts                 # evaluate active price alerts
 ```
-
-## Caching
-- Market data is cached in **hierarchical disk files** at `data/cache/` for **1 hour** (`MarketDataService::CACHE_TTL = 3600`)
-- Cache structure: `data/cache/{quotes,historical,analyst,profiles}/SYMBOL[_PERIOD].json`
-- Run `make refresh-cache` or click **REFRESH** button in UI to clear and refetch
-- Fallback to `MOCK_PRICES` when cache is empty and API key is absent
-- Legacy monolithic cache at `.cache/market_cache.json` auto-migrates on first load
-
-## Signals
-- `RecommendationService` issues BUY/SELL/HOLD based on price change percent
-- Extend with SMA/RSI using Alpha Vantage Technical Indicator endpoints
-
-## API Docs
-- Alpha Vantage: https://www.alphavantage.co/documentation/
-- Japan proxy: EWJ (iShares MSCI Japan ETF)
-- Europe proxy: VGK (Vanguard FTSE Europe ETF)
 
 ## Contribution
-- Fork, branch, and submit PRs
-- Write tests for new features
-- Keep documentation up to date
+
+- Fork, branch, and submit PRs against `main`.
+- CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs RSpec + scripts
+  syntax check on every PR.
+- **Update relevant docs in the same PR.** Don't leave docs to be reconciled
+  later — they drift silently. Touchpoints: README, CREDENTIALS, TODO, AGENTS,
+  Instructions.
+- Tests are required for new behaviour. Particularly: anything that could
+  break the [cache-only render contract](AGENTS.md#caching-architecture) needs
+  hard `not_to receive(:fetch_quote)` assertions like the ones in
+  [spec/portfolio_perf_spec.rb](spec/portfolio_perf_spec.rb).
