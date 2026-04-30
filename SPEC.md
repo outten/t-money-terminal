@@ -1,4 +1,16 @@
-# T Money Terminal
+# T Money Terminal — Original brief
+
+> 📌 **This is the original scoping brief, kept as historical context.** Actual feature
+> progress and the current architecture live in:
+>
+> - [README.md](README.md) — feature surface + page list
+> - [AGENTS.md](AGENTS.md) — architecture, caching contract, gotchas
+> - [TODO.md](TODO.md) — shipped + open + dropped roadmap items
+> - [ANALYSIS.md](ANALYSIS.md) — Bloomberg-comparison framing + data-source mapping
+> - [CREDENTIALS.md](CREDENTIALS.md) — API key setup
+> - [Instructions.md](Instructions.md) — user-facing how-to
+
+---
 
 The "T Money Terminal" project is based on answering this:
 
