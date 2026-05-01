@@ -33,7 +33,7 @@ See [CREDENTIALS.md](CREDENTIALS.md) for the full walkthrough including FMP free
 make install                 # bundle install
 make run                     # auto-reload via rerun → http://localhost:4567 (alias: make dev)
 make serve                   # one-shot run, no auto-reload
-make test                    # RSpec — currently 356 examples
+make test                    # RSpec — currently 403 examples
 make refresh-cache           # warm market-data cache for the universe
 make refresh-providers       # warm FMP / FRED / News / Stooq
 make refresh-all             # both — REGIONS ∪ portfolio ∪ watchlist
@@ -102,8 +102,9 @@ If you change `valuate_position` or `annotate_portfolio_signals!`, run [spec/por
 | [AlertsStore](app/alerts_store.rb) | `data/alerts.json` | Threshold alerts; triggered alerts append to `alerts_triggered.log` |
 | [SymbolIndex](app/symbol_index.rb) | `data/symbols_extended.json` | Runtime ticker discovery extensions |
 | [ImportSnapshotStore](app/import_snapshot_store.rb) | `data/imports/<source>/<basename>.json` | Per-source broker import snapshots (audit + drift) |
+| [ProfileStore](app/profile_store.rb) | `data/profile.json` | User investment profile (current_age, retirement_age, risk_tolerance, federal LTCG / ordinary rates, optional state rate, NIIT) — drives the [TaxHarvester](app/tax_harvester.rb) analysis at `/portfolio/tax-harvest` |
 
-All five mutating stores use `MUTEX.synchronize` + write-to-`.tmp`-then-rename for crash safety.
+All mutating stores use `MUTEX.synchronize` + write-to-`.tmp`-then-rename for crash safety.
 
 ## Provider waterfall
 
@@ -152,6 +153,8 @@ app/
   trades_store.rb          # Append-only history (short/long-term + wash-sale flags)
   tax_lot.rb               # Holding-period classifier (short ≤ 1yr / long > 1yr)
   wash_sale.rb             # IRS wash-sale risk flagging on loss-sells (±30d)
+  profile_store.rb         # User profile (age, retirement, risk tolerance, tax rates, NIIT) at data/profile.json
+  tax_harvester.rb         # Loss-harvest candidate ranking, tax-savings estimate, ST→LT crossings, replacement suggestions
   analytics/benchmark.rb   # Lot-weighted portfolio return vs SPY (cache-only)
   fidelity_importer.rb     # Broker CSV → reconciliation
   import_snapshot_store.rb # Per-source snapshot persistence
@@ -164,7 +167,7 @@ app/
 views/                     # ERB templates
 public/                    # style.css + app.js (chart) + features.js (search/watchlist/alerts/portfolio)
 scripts/                   # refresh_cache, refresh_providers, scheduler, check_alerts, cache_status
-spec/                      # 14 spec files, 356 examples (tax_lot_spec.rb covers TaxLot, WashSale, Analytics::Benchmark)
+spec/                      # 15 spec files, 403 examples (tax_lot_spec.rb covers TaxLot/WashSale/Benchmark; tax_harvest_spec.rb covers ProfileStore + TaxHarvester + routes)
 data/                      # All app state (git-ignored except hierarchical cache structure markers)
 .github/workflows/ci.yml   # GitHub Actions — RSpec + scripts syntax check on push to main + every PR
 ```
@@ -172,7 +175,7 @@ data/                      # All app state (git-ignored except hierarchical cach
 ## Testing
 
 ```bash
-make test                                  # full suite (356 examples, 0 failures)
+make test                                  # full suite (403 examples, 0 failures)
 bundle exec rspec spec/feature_spec.rb     # one file
 bundle exec rspec spec/feature_spec.rb:42  # one example
 ```
@@ -219,6 +222,7 @@ Japan and Europe data use US-listed ETFs (EWJ, VGK) as proxies. Direct exchange 
 
 - [README.md](README.md) — user-facing overview
 - **[AGENTS.md](AGENTS.md)** — this file (developer/agent reference)
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — PR workflow (branch / commit style / tests / CI / merge)
 - [TODO.md](TODO.md) — roadmap (shipped + open + dropped)
 - [CREDENTIALS.md](CREDENTIALS.md) — API key setup walkthrough
 - [Instructions.md](Instructions.md) — user-facing how-to
@@ -226,4 +230,4 @@ Japan and Europe data use US-listed ETFs (EWJ, VGK) as proxies. Direct exchange 
 - [SPEC.md](SPEC.md) — original project brief (frozen)
 - [ANALYSIS.md](ANALYSIS.md) — data-source positioning (Bloomberg-comparison framing)
 
-**Workflow rule**: every PR that changes behaviour should update the relevant docs in the same PR — see the saved-memory note `feedback_update_docs_each_pr`.
+**Workflow rule**: every PR that changes behaviour should update the relevant docs in the same PR — see [CONTRIBUTING.md](CONTRIBUTING.md) and the saved-memory note `feedback_update_docs_each_pr`.

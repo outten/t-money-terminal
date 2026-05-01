@@ -27,15 +27,7 @@ make scheduler TIER=quotes        # tiered cache refresh
 make check-alerts                 # evaluate active price alerts
 ```
 
-## Contribution
+## Contributing
 
-- Fork, branch, and submit PRs against `main`.
-- CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs RSpec + scripts
-  syntax check on every PR.
-- **Update relevant docs in the same PR.** Don't leave docs to be reconciled
-  later — they drift silently. Touchpoints: README, CREDENTIALS, TODO, AGENTS,
-  Instructions.
-- Tests are required for new behaviour. Particularly: anything that could
-  break the [cache-only render contract](AGENTS.md#caching-architecture) needs
-  hard `not_to receive(:fetch_quote)` assertions like the ones in
-  [spec/portfolio_perf_spec.rb](spec/portfolio_perf_spec.rb).
+The full PR workflow (branch naming, commit style, PR body template, CI,
+rebase-merge) lives in [CONTRIBUTING.md](CONTRIBUTING.md).

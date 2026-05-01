@@ -1,0 +1,312 @@
+<h2>Tax-Loss Harvesting</h2>
+<p class="subtitle">
+  Identify open lots underwater, estimate tax savings, and surface wash-sale risk before you act.
+  <a href="/portfolio">← back to portfolio</a>
+</p>
+
+<% if params['profile_error'] %>
+  <div class="degradation-banner" role="alert">
+    <strong>Profile update failed:</strong> <%= params['profile_error'] %>
+  </div>
+<% end %>
+
+<!-- ============================================================= -->
+<!-- Profile context                                                -->
+<!-- ============================================================= -->
+<section class="benchmark-section">
+  <h3>Your profile</h3>
+  <div class="portfolio-summary">
+    <div class="summary-card">
+      <div class="summary-label">Current age</div>
+      <div class="summary-value mono"><%= @profile[:current_age] || '—' %></div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Retirement age</div>
+      <div class="summary-value mono"><%= @profile[:retirement_age] || '—' %></div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Years to retirement</div>
+      <div class="summary-value mono"><%= @years_to_retirement || '—' %></div>
+      <div class="summary-sub muted">
+        <% if @years_to_retirement && @years_to_retirement <= 5 %>
+          Preservation focus
+        <% elsif @years_to_retirement && @years_to_retirement <= 10 %>
+          Balanced focus
+        <% elsif @years_to_retirement %>
+          Growth focus
+        <% else %>
+          Set your age below
+        <% end %>
+      </div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Risk tolerance</div>
+      <div class="summary-value mono"><%= @profile[:risk_tolerance] %></div>
+      <div class="summary-sub muted">Drives harvest threshold</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Effective marginal rates</div>
+      <div class="summary-value mono" style="font-size: 1rem">
+        <%= (@profile[:federal_ltcg_rate] * 100).round(1) %>% LT ·
+        <%= (@profile[:federal_ordinary_rate] * 100).round(1) %>% ST
+      </div>
+      <div class="summary-sub muted">
+        <% if @profile[:state_tax_rate] %>+ <%= (@profile[:state_tax_rate] * 100).round(1) %>% state<% end %>
+        <% if @profile[:niit_applies] %>· NIIT 3.8%<% end %>
+      </div>
+    </div>
+  </div>
+
+  <details class="positions-collapsible" <%= @profile_configured ? '' : 'open' %>>
+    <summary class="positions-collapsible-summary">
+      <span class="positions-chevron" aria-hidden="true">▸</span>
+      <span class="positions-summary-text">
+        <strong><%= @profile_configured ? 'Update profile' : 'Set up your profile to enable analysis' %></strong>
+        <span class="muted">— click to show / hide</span>
+      </span>
+    </summary>
+    <form action="/profile" method="post" class="portfolio-form" style="margin-top: 12px">
+      <input type="hidden" name="return_to" value="/portfolio/tax-harvest">
+      <label>Current age
+        <input type="number" name="current_age" min="0" max="120" value="<%= @profile[:current_age] %>" placeholder="56" required>
+      </label>
+      <label>Retirement age
+        <input type="number" name="retirement_age" min="0" max="120" value="<%= @profile[:retirement_age] %>" placeholder="63" required>
+      </label>
+      <label>Risk tolerance
+        <select name="risk_tolerance">
+          <% ProfileStore::RISK_TOLERANCES.each do |t| %>
+            <option value="<%= t %>" <%= @profile[:risk_tolerance] == t ? 'selected' : '' %>><%= t %></option>
+          <% end %>
+        </select>
+      </label>
+      <label>Federal LTCG rate (decimal)
+        <input type="number" step="0.01" min="0" max="0.5" name="federal_ltcg_rate" value="<%= @profile[:federal_ltcg_rate] %>" placeholder="0.15">
+      </label>
+      <label>Federal ordinary-income rate (decimal)
+        <input type="number" step="0.01" min="0" max="0.5" name="federal_ordinary_rate" value="<%= @profile[:federal_ordinary_rate] %>" placeholder="0.22">
+      </label>
+      <label>State tax rate (decimal, optional)
+        <input type="number" step="0.01" min="0" max="0.2" name="state_tax_rate" value="<%= @profile[:state_tax_rate] %>" placeholder="0.05">
+      </label>
+      <label>NIIT applies?
+        <select name="niit_applies">
+          <option value="false" <%= !@profile[:niit_applies] ? 'selected' : '' %>>No</option>
+          <option value="true" <%= @profile[:niit_applies] ? 'selected' : '' %>>Yes (3.8% on net investment income, high earners)</option>
+        </select>
+      </label>
+      <button type="submit" class="btn-primary">Save profile</button>
+    </form>
+    <p class="data-source">
+      Risk tolerance drives the minimum loss size we'll recommend harvesting:
+      <strong>aggressive</strong> harvests above 0.5%, <strong>moderate</strong> above 2%, <strong>conservative</strong> above 5% of cost basis. Tax rates are stored as decimals (0.15 = 15%). Adjust as needed for your bracket.
+    </p>
+  </details>
+</section>
+
+<!-- ============================================================= -->
+<!-- YTD context                                                    -->
+<!-- ============================================================= -->
+<section class="benchmark-section">
+  <h3>Year-to-date realised</h3>
+  <% ytd = @analysis[:ytd] %>
+  <div class="portfolio-summary">
+    <div class="summary-card">
+      <div class="summary-label">Realised short-term</div>
+      <div class="summary-value mono <%= ytd[:realized_short] > 0 ? 'positive' : (ytd[:realized_short] < 0 ? 'negative' : '') %>">
+        <%= format_money(ytd[:realized_short]) %>
+      </div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Realised long-term</div>
+      <div class="summary-value mono <%= ytd[:realized_long] > 0 ? 'positive' : (ytd[:realized_long] < 0 ? 'negative' : '') %>">
+        <%= format_money(ytd[:realized_long]) %>
+      </div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Net realised</div>
+      <div class="summary-value mono <%= ytd[:net] > 0 ? 'positive' : (ytd[:net] < 0 ? 'negative' : '') %>">
+        <%= format_money(ytd[:net]) %>
+      </div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">$3 k ordinary-offset cap</div>
+      <div class="summary-value mono">
+        <%= format_money(ytd[:ordinary_offset_used]) %> / <%= format_money(ytd[:ordinary_offset_cap]) %>
+      </div>
+      <div class="summary-sub muted">
+        <%= format_money(ytd[:ordinary_offset_remaining]) %> available
+        <% if ytd[:carryforward_estimate] > 0 %>
+          · <%= format_money(ytd[:carryforward_estimate]) %> carryforward
+        <% end %>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================= -->
+<!-- Crossing-threshold watchlist                                   -->
+<!-- ============================================================= -->
+<% unless @analysis[:crossing_threshold].empty? %>
+  <section class="benchmark-section">
+    <h3>Lots crossing short → long-term in ≤ 30 days</h3>
+    <p class="data-source">
+      Holding period flips from short-term (ordinary tax) to long-term (lower cap-gains rate) the day after the 1-year mark. If a lot has an unrealised <strong>gain</strong> you're considering realising, waiting saves tax. If it has an unrealised <strong>loss</strong>, the opposite calculus applies — see the harvest table below.
+    </p>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Symbol</th>
+          <th class="num">Shares</th>
+          <th class="num">Cost basis</th>
+          <th class="num">Current price</th>
+          <th class="num">Unrealised P&amp;L</th>
+          <th class="num">Days held</th>
+          <th class="num">Days to long-term</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% @analysis[:crossing_threshold].each do |row| %>
+          <tr>
+            <td><a href="/analysis/<%= row[:symbol] %>"><%= row[:symbol] %></a></td>
+            <td class="num mono"><%= row[:shares] %></td>
+            <td class="num mono">$<%= format('%.2f', row[:cost_basis]) %></td>
+            <td class="num mono"><%= row[:current_price] ? "$#{format('%.2f', row[:current_price])}" : '—' %></td>
+            <td class="num mono <%= row[:unrealized_pl] && row[:unrealized_pl] >= 0 ? 'positive' : 'negative' %>">
+              <%= row[:unrealized_pl] ? format_money(row[:unrealized_pl]) : '—' %>
+            </td>
+            <td class="num mono"><%= row[:days_held] %></td>
+            <td class="num mono"><strong><%= row[:days_to_long_term] %>d</strong></td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  </section>
+<% end %>
+
+<!-- ============================================================= -->
+<!-- Harvest candidates                                             -->
+<!-- ============================================================= -->
+<section class="benchmark-section">
+  <h3>Loss-harvesting candidates</h3>
+
+  <% totals = @analysis[:totals] %>
+  <div class="portfolio-summary">
+    <div class="summary-card">
+      <div class="summary-label">Lots examined</div>
+      <div class="summary-value mono"><%= totals[:lots_examined] %></div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Lots underwater</div>
+      <div class="summary-value mono"><%= totals[:lots_with_loss] %></div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Total unrealised loss</div>
+      <div class="summary-value mono <%= totals[:total_unrealized_loss] != 0 ? 'negative' : '' %>">
+        <%= format_money(totals[:total_unrealized_loss]) %>
+      </div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Estimated total tax savings</div>
+      <div class="summary-value mono <%= totals[:total_estimated_savings] > 0 ? 'positive' : '' %>">
+        <%= format_money(totals[:total_estimated_savings]) %>
+      </div>
+      <div class="summary-sub muted">If every "harvest" recommendation acted on</div>
+    </div>
+  </div>
+
+  <% if @analysis[:candidates].empty? %>
+    <div class="notice" style="margin-top: 16px">
+      No open lots are underwater. Either every position is in the green, or your portfolio is empty.
+      Check back after a market drawdown or after re-importing your latest broker file.
+    </div>
+  <% else %>
+    <table class="data-table" style="margin-top: 12px">
+      <thead>
+        <tr>
+          <th>Symbol</th>
+          <th class="num">Shares</th>
+          <th class="num">Cost basis</th>
+          <th class="num">Current</th>
+          <th class="num">Unrealised loss</th>
+          <th class="num">Loss %</th>
+          <th>Holding</th>
+          <th class="num">Est. tax saved</th>
+          <th>Recommendation</th>
+          <th>Replacements</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% @analysis[:candidates].each do |c| %>
+          <tr>
+            <td><a href="/analysis/<%= c[:symbol] %>"><%= c[:symbol] %></a></td>
+            <td class="num mono"><%= c[:shares] %></td>
+            <td class="num mono">$<%= format('%.2f', c[:cost_basis]) %></td>
+            <td class="num mono">$<%= format('%.2f', c[:current_price]) %></td>
+            <td class="num mono negative"><%= format_money(c[:unrealized_pl]) %></td>
+            <td class="num mono negative"><%= format_percent(c[:loss_pct]) %></td>
+            <td>
+              <span class="signal-badge holding-<%= c[:holding_period] %>"><%= c[:holding_period] %></span>
+              <% if c[:days_held] %>
+                <div class="muted" style="font-size: 0.78rem">
+                  <%= c[:days_held] %>d
+                  <% if c[:acquired_at_source] == 'snapshot' %>(inferred)<% end %>
+                </div>
+              <% end %>
+            </td>
+            <td class="num mono <%= c[:estimated_tax_savings] > 0 ? 'positive' : '' %>">
+              <%= format_money(c[:estimated_tax_savings]) %>
+              <div class="muted" style="font-size: 0.72rem">
+                @ <%= (c[:marginal_rate_applied] * 100).round(1) %>%
+              </div>
+            </td>
+            <td>
+              <span class="signal-badge signal-<%= c[:recommendation][:action] == 'harvest' ? 'buy' : (c[:recommendation][:action] == 'wait' ? 'hold' : 'sell') %>">
+                <%= c[:recommendation][:action] %>
+              </span>
+              <div class="muted" style="font-size: 0.78rem; margin-top: 2px">
+                <%= c[:recommendation][:reason] %>
+              </div>
+              <% if c[:wash_sale_flags] && !c[:wash_sale_flags].empty? %>
+                <div class="muted" style="font-size: 0.72rem; color: #800a0a; margin-top: 2px">
+                  ⚠ wash-sale risk
+                </div>
+              <% end %>
+            </td>
+            <td class="muted" style="font-size: 0.82rem">
+              <% if c[:replacement_suggestions].any? %>
+                <%= c[:replacement_suggestions].first(3).map { |s| "<a href='/analysis/#{s}'>#{s}</a>" }.join(' · ') %>
+              <% else %>
+                —
+              <% end %>
+            </td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+
+    <p class="data-source">
+      <strong>How "Estimated tax saved" is computed:</strong> for short-term lots, the loss × your federal ordinary-income rate
+      (<%= (@profile[:federal_ordinary_rate] * 100).round(1) %>%); for long-term lots, the loss × your federal LTCG rate
+      (<%= (@profile[:federal_ltcg_rate] * 100).round(1) %>%). State tax + NIIT included if configured. Short-term losses are the
+      most valuable — they offset income at your ordinary rate, which is generally higher than the LTCG rate.
+    </p>
+    <p class="data-source">
+      <strong>Replacement-security suggestions</strong> are different-INDEX ETFs (e.g. VOO → VTI swaps S&P 500 for Total Market). The
+      IRS hasn't precisely defined "substantially identical," but the consensus is that two ETFs tracking the SAME index from
+      different providers (SPY ↔ VOO ↔ IVV) are likely substantially identical, while different indices generally are not. When in
+      doubt, sit out the 31 days. Same-symbol matching only — mutual funds tracking the same index are out of scope.
+    </p>
+  <% end %>
+</section>
+
+<!-- Disclaimer ====================================================== -->
+<section class="benchmark-section">
+  <p class="data-source" style="font-style: italic">
+    <strong>Decision support, not tax advice.</strong> This page surfaces candidates and estimates based on cached portfolio data
+    and your configured tax rates. It does not file your return, account for state-specific rules beyond a flat rate, model AMT,
+    capital-loss carryforwards from prior years, or qualified-dividend interactions. Confirm with a tax professional before acting.
+    Your retirement timeline (<%= @years_to_retirement || '?' %>y) and risk tolerance (<%= @profile[:risk_tolerance] %>) shape the recommendations,
+    not the tax math.
+  </p>
+</section>

@@ -54,6 +54,7 @@ make run                # auto-reloads on file changes → http://localhost:4567
 | Portfolio | `/portfolio` | Multi-lot positions with live unrealized P&L, signal badges, drift link, broker import button |
 | Trade history | `/trades` | Append-only BUY/SELL log with realized P&L YTD + lifetime |
 | Portfolio drift | `/portfolio/drift` | What changed between your two most recent broker imports |
+| Tax-loss harvesting | `/portfolio/tax-harvest` | Underwater lots ranked by estimated tax savings · ST→LT crossing watchlist · YTD $3 k cap progress · replacement-security suggestions |
 | Compare | `/compare?symbols=AAPL,MSFT&period=1y` | Rebased-to-100 multi-symbol performance chart (≤ 6 symbols) |
 | Correlations | `/correlations?symbols=...&period=1y` | Pairwise daily-return correlation heatmap |
 | Cache admin | `/admin/cache` | Cache state + per-row refresh buttons + Refresh-ALL button |
@@ -78,6 +79,31 @@ What happens:
 - The full parsed payload is persisted as a snapshot for audit + drift comparison.
 
 After your second import you can visit `/portfolio/drift` to see what changed: positions added, sold, scaled up/down — sorted biggest-mover-first.
+
+---
+
+## 6a. Tax-loss harvesting
+
+`/portfolio/tax-harvest` (linked from the `/portfolio` subtitle) inspects every open lot and ranks the underwater ones by estimated tax savings.
+
+**Set up your profile first** — the analysis needs your age, retirement age, risk tolerance, and federal marginal rates (and optionally state + NIIT). The page renders an empty state until `current_age` is set; click the "Set up your profile" form to fill it in. Profile lives at `data/profile.json`.
+
+**Risk tolerance drives which losses are worth the friction:**
+- `aggressive` — harvest losses ≥ 0.5 % of cost basis
+- `moderate` — harvest losses ≥ 2 %
+- `conservative` — harvest losses ≥ 5 %
+
+**Per-candidate recommendation** is one of:
+- `harvest` — loss is meaningful, no wash-sale risk, holding period favours acting now
+- `wait` — short-term loss days from flipping to long-term and the conservative profile is set
+- `skip` — loss too small for the risk tolerance, OR a same-symbol BUY landed within ±30 days (wash-sale risk)
+
+**Other sections:**
+- **YTD realised** — short / long / net, plus how much of the $3 000 ordinary-offset cap is already used and the carryforward estimate.
+- **Crossing ST → LT in ≤ 30 days** — flagged so you don't realise a near-LT loss without thinking; for unrealised gains in the same window, waiting saves tax.
+- **Replacement suggestions** — different-INDEX ETFs (SPY → VTI, QQQ → VUG, etc.). Same-INDEX trios (SPY ↔ VOO ↔ IVV) are intentionally NOT recommended.
+
+This is **decision support, not tax advice**. The page does not file your return, account for AMT, prior-year carryforwards, or QDI interactions.
 
 ---
 

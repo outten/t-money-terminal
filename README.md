@@ -50,6 +50,7 @@ TradingView [lightweight-charts](https://www.tradingview.com/lightweight-charts/
 - [TradesStore](app/trades_store.rb) — append-only history at `data/trades.json`; YTD + lifetime realized-P&L cards split by short-term / long-term.
 - **Drift view** at `/portfolio/drift` — what changed between your two most recent broker imports (added / removed / scaled, sorted biggest-mover-first)
 - **Sell preview** — `POST /api/portfolio/sell/preview` returns the breakdown (short/long P&L + wash-sale flags) without committing.
+- **Tax-loss harvesting** at `/portfolio/tax-harvest` — open lots underwater are ranked by estimated tax savings (loss × your federal short-/long-term rate, plus optional state + NIIT), with per-candidate `harvest` / `wait` / `skip` recommendations branched on risk tolerance, the ST→LT crossing window, and wash-sale risk. Includes a YTD realised summary with $3 k ordinary-offset cap progress, a "lots crossing ST→LT in ≤ 30 days" watchlist, and heuristic different-INDEX replacement-security suggestions (e.g. SPY → VTI, QQQ → VUG). Configurable user profile (current age, retirement age, risk tolerance, marginal rates, NIIT) lives in [ProfileStore](app/profile_store.rb) at `data/profile.json`. See [TaxHarvester](app/tax_harvester.rb).
 
 ### Broker import (Fidelity)
 
@@ -93,6 +94,7 @@ The only network events are: explicit imports, the scheduler (`make scheduler`),
 | Portfolio (multi-lot, signals, notes, broker import) | `/portfolio` |
 | Trade history (BUY/SELL log + realized P&L YTD / lifetime) | `/trades` |
 | Portfolio drift (snapshot diff) | `/portfolio/drift` |
+| Tax-loss harvesting (loss-ranked candidates, ST→LT watchlist, replacement suggestions) | `/portfolio/tax-harvest` |
 | Multi-symbol rebased compare | `/compare` |
 | Pairwise correlation heatmap | `/correlations` |
 | Cache admin (per-row + Refresh-ALL buttons) | `/admin/cache` |
@@ -143,7 +145,7 @@ See [CREDENTIALS.md](CREDENTIALS.md) for signup walkthroughs and the FMP free-ti
 ### Common tasks
 
 ```bash
-make test                        # RSpec suite (currently 356 examples)
+make test                        # RSpec suite (currently 403 examples)
 make refresh-cache               # Warm market-data cache for the universe
 make refresh-providers           # Warm FMP / FRED / News / Stooq caches
 make refresh-all                 # Both, in one shot — REGIONS ∪ portfolio ∪ watchlist
@@ -171,6 +173,8 @@ app/
   trades_store.rb             # Append-only trade history (with short/long-term subtotals)
   tax_lot.rb                  # Holding-period classifier + earliest-snapshot fallback
   wash_sale.rb                # IRS wash-sale risk flagging on loss-sells
+  profile_store.rb            # User investment profile (age, retirement, risk, tax rates) at data/profile.json
+  tax_harvester.rb            # Loss-harvest candidate ranking, ST→LT crossings, recommendations
   fidelity_importer.rb        # Broker CSV parser + reconciliation orchestrator
   import_snapshot_store.rb    # Per-source snapshot persistence (audit + drift)
   portfolio_diff.rb           # Snapshot-to-snapshot diff math
@@ -182,7 +186,7 @@ app/
 views/                        # ERB templates with shared layout
 public/                       # style.css, app.js (chart), features.js (search/watchlist/alerts/portfolio)
 scripts/                      # refresh_cache, refresh_providers, scheduler, check_alerts, cache_status
-spec/                         # RSpec — 356 examples across 14 spec files
+spec/                         # RSpec — 403 examples across 15 spec files
 data/cache/                   # Hierarchical disk cache
 data/imports/                 # Broker import snapshots (audit + drift)
 data/porfolio/fidelity/       # Drop your Fidelity Portfolio_Positions_*.csv here
@@ -190,6 +194,10 @@ data/porfolio/fidelity/       # Drop your Fidelity Portfolio_Positions_*.csv her
 ```
 
 ---
+
+## Contributing
+
+PR workflow (branch naming, commit style, CI, merge) lives in [CONTRIBUTING.md](CONTRIBUTING.md). Architecture + caching contract + gotchas live in [AGENTS.md](AGENTS.md).
 
 ## License
 

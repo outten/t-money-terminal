@@ -15,6 +15,8 @@ require_relative 'alerts_store'
 require_relative 'portfolio_store'
 require_relative 'trades_store'
 require_relative 'wash_sale'
+require_relative 'profile_store'
+require_relative 'tax_harvester'
 require_relative 'fidelity_importer'
 require_relative 'import_snapshot_store'
 require_relative 'portfolio_diff'
@@ -534,6 +536,65 @@ class TMoneyTerminal < Sinatra::Base
     diff = PortfolioDiff.compute_latest_pair(source: 'fidelity')
     halt 404, { error: 'need at least 2 snapshots to compute drift' }.to_json unless diff
     diff.to_json
+  end
+
+  # --- Tax-loss harvesting analysis ---
+
+  # Sub-page under /portfolio. Identifies open lots with unrealised
+  # losses, estimates tax savings using the user's profile rates,
+  # surfaces wash-sale risk + ST→LT crossings + replacement security
+  # suggestions, and recommends an action per candidate based on the
+  # user's risk_tolerance + retirement timeline. Decision support, not
+  # tax advice — view always renders the disclaimer.
+  get '/portfolio/tax-harvest' do
+    @profile  = ProfileStore.read
+    @rows     = PortfolioStore.positions.map { |p| valuate_position(p) }
+    @analysis = TaxHarvester.analyse(
+      positions: @rows,
+      profile:   @profile,
+      trades:    TradesStore.read
+    )
+    @profile_configured = ProfileStore.configured?
+    @years_to_retirement = ProfileStore.years_to_retirement
+    erb :tax_harvest
+  end
+
+  get '/api/portfolio/tax-harvest' do
+    content_type :json
+    profile = ProfileStore.read
+    rows    = PortfolioStore.positions.map { |p| valuate_position(p) }
+    TaxHarvester.analyse(positions: rows, profile: profile, trades: TradesStore.read).to_json
+  end
+
+  # Update the user profile (current_age / retirement_age / risk_tolerance
+  # / tax rates / NIIT / state). Form fallback. JSON-API peer is
+  # POST /api/profile.
+  post '/profile' do
+    begin
+      ProfileStore.update(
+        current_age:           params['current_age'],
+        retirement_age:        params['retirement_age'],
+        risk_tolerance:        params['risk_tolerance'],
+        federal_ltcg_rate:     params['federal_ltcg_rate'],
+        federal_ordinary_rate: params['federal_ordinary_rate'],
+        state_tax_rate:        params['state_tax_rate'],
+        niit_applies:          params['niit_applies']
+      )
+      redirect (params['return_to'] || '/portfolio/tax-harvest'), 302
+    rescue ArgumentError => e
+      redirect "/portfolio/tax-harvest?profile_error=#{URI.encode_www_form_component(e.message)}", 302
+    end
+  end
+
+  post '/api/profile' do
+    content_type :json
+    body = request_json
+    begin
+      updated = ProfileStore.update(body)
+      updated.to_json
+    rescue ArgumentError => e
+      halt 400, { error: e.message }.to_json
+    end
   end
 
   # --- Fidelity broker import ---

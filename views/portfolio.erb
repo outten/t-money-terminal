@@ -1,5 +1,8 @@
 <h2>Portfolio</h2>
-<p class="subtitle">Lot-based positions with live unrealized P&amp;L. Sells close shares FIFO and append to <a href="/trades">Trade History</a>.</p>
+<p class="subtitle">
+  Lot-based positions with live unrealized P&amp;L. Sells close shares FIFO and append to <a href="/trades">Trade History</a>.
+  &middot; <a href="/portfolio/tax-harvest">Tax-loss harvesting →</a>
+</p>
 
 <% if @import_count && @import_count > 0 %>
   <div class="degradation-banner" role="status" style="background:#d1f0d1; color:#1d4620; border-color:#a3d8a3">
@@ -123,7 +126,12 @@
   <% end %>
 
   <section class="benchmark-section">
-    <h3>Realized P&amp;L (YTD by holding period) &middot; Tax + wash-sale</h3>
+    <h3>
+      Realized P&amp;L (YTD by holding period) &middot; Tax + wash-sale
+      <span class="muted" style="font-size:0.78rem; font-weight:normal">
+        &middot; <a href="/portfolio/tax-harvest">Tax-loss harvesting →</a>
+      </span>
+    </h3>
     <div class="portfolio-summary">
       <div class="summary-card">
         <div class="summary-label">Short-term</div>
