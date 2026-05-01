@@ -64,7 +64,15 @@
 - **FMP paywall tombstone** — on HTTP 402 we write a 24 h tombstone at `data/cache/fmp/_paywalled_/<SYM>.txt` and short-circuit future requests; HealthRegistry success rate stops degrading from compounding 402s.
 - **Admin refresh buttons** — `/admin/cache` action bar (refresh one symbol synchronously, refresh ALL in a background thread, per-row ↻ buttons), live progress banner, `RefreshTracker` for in-memory job state.
 
-**Tests:** 334 examples, 0 failures across 13 spec files.
+### [PR #10] — Tax-aware sells + benchmark comparison
+- **Tax-lot classification** ([app/tax_lot.rb](app/tax_lot.rb)) — every closed lot tagged short-term (held ≤ 1 yr) or long-term (held > 1 yr). For Fidelity-imported lots without an explicit acquisition date, falls back to the earliest broker snapshot containing the symbol with sufficient shares.
+- **Wash-sale flagging** ([app/wash_sale.rb](app/wash_sale.rb)) — SELLs at a loss are scanned for same-symbol BUYs within ±30 days. Flags persist on the trade record with the recommended resume date. Warning banner on `/trades` for each affected sell.
+- **Benchmark comparison** ([app/analytics/benchmark.rb](app/analytics/benchmark.rb)) — `/portfolio` shows your lot-weighted return-since-acquired vs SPY return over the same window, plus alpha. Pure cache-only computation.
+- **Sell preview** — `POST /api/portfolio/sell/preview` returns the breakdown (short/long P&L + wash-sale flags) without committing.
+- `/portfolio` summary cards split realized YTD by short vs long. `/trades` page shows holding-period badges + wash-sale warnings inline.
+- 22 new tests in [spec/tax_lot_spec.rb](spec/tax_lot_spec.rb).
+
+**Tests:** 356 examples, 0 failures across 14 spec files.
 
 ---
 

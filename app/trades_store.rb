@@ -66,6 +66,28 @@ module TradesStore
     realized_pl_total(from: Date.new(today.year, 1, 1), to: today)
   end
 
+  # Sum of short-term realized P&L for sells in [from, to]. Older trades
+  # without short_term_pl set are skipped (legacy data — pre-tax-lot work).
+  def realized_pl_short_term(from: nil, to: nil)
+    list = (from || to) ? between(from: from, to: to) : read
+    list.select { |t| t[:side] == 'sell' && t[:short_term_pl] }.sum { |t| t[:short_term_pl].to_f }.round(2)
+  end
+
+  def realized_pl_long_term(from: nil, to: nil)
+    list = (from || to) ? between(from: from, to: to) : read
+    list.select { |t| t[:side] == 'sell' && t[:long_term_pl] }.sum { |t| t[:long_term_pl].to_f }.round(2)
+  end
+
+  def realized_pl_short_term_ytd
+    today = Date.today
+    realized_pl_short_term(from: Date.new(today.year, 1, 1), to: today)
+  end
+
+  def realized_pl_long_term_ytd
+    today = Date.today
+    realized_pl_long_term(from: Date.new(today.year, 1, 1), to: today)
+  end
+
   # Append a BUY record (after PortfolioStore.add_lot).
   def record_buy(symbol:, shares:, price:, date: nil, notes: nil, lot_id: nil)
     append({
@@ -84,20 +106,25 @@ module TradesStore
   end
 
   # Append a SELL record (after PortfolioStore.close_shares_fifo). `breakdown`
-  # is the hash returned by close_shares_fifo.
-  def record_sell(breakdown, notes: nil)
+  # is the hash returned by close_shares_fifo. `wash_sale_flags` is the
+  # array returned by `WashSale.check(breakdown)` (may be empty).
+  def record_sell(breakdown, notes: nil, wash_sale_flags: nil)
     append({
-      id:          SecureRandom.hex(6),
-      date:        breakdown[:sold_at] || Date.today.iso8601,
-      recorded_at: Time.now.utc.iso8601,
-      symbol:      breakdown[:symbol],
-      side:        'sell',
-      shares:      breakdown[:shares_closed],
-      price:       breakdown[:price],
-      realized_pl: breakdown[:realized_pl],
-      lots_closed: breakdown[:lots_closed],
-      lot_id:      nil,
-      notes:       (notes.to_s.strip.empty? ? nil : notes.to_s.strip)
+      id:              SecureRandom.hex(6),
+      date:            breakdown[:sold_at] || Date.today.iso8601,
+      recorded_at:     Time.now.utc.iso8601,
+      symbol:          breakdown[:symbol],
+      side:            'sell',
+      shares:          breakdown[:shares_closed],
+      price:           breakdown[:price],
+      realized_pl:     breakdown[:realized_pl],
+      short_term_pl:   breakdown[:short_term_pl],
+      long_term_pl:    breakdown[:long_term_pl],
+      unknown_pl:      breakdown[:unknown_pl],
+      lots_closed:     breakdown[:lots_closed],
+      lot_id:          nil,
+      wash_sale_flags: (wash_sale_flags && !wash_sale_flags.empty? ? wash_sale_flags : nil),
+      notes:           (notes.to_s.strip.empty? ? nil : notes.to_s.strip)
     })
   end
 

@@ -21,7 +21,7 @@ lives there.
 ```bash
 make install                      # bundle install
 make run                          # dev server with rerun auto-reload
-make test                         # 334 examples (RSpec)
+make test                         # 356 examples (RSpec)
 make refresh-all                  # warm every cache for the symbol universe
 make scheduler TIER=quotes        # tiered cache refresh
 make check-alerts                 # evaluate active price alerts

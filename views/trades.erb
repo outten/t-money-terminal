@@ -1,5 +1,5 @@
 <h2>Trade History</h2>
-<p class="subtitle">Append-only log of every buy and sell. Sells include FIFO realized P&amp;L per lot closed.</p>
+<p class="subtitle">Append-only log of every buy and sell. Sells include FIFO realized P&amp;L per lot closed, holding-period classification (short / long), and wash-sale risk flags.</p>
 
 <section class="portfolio-summary">
   <div class="summary-card">
@@ -9,7 +9,21 @@
     </div>
   </div>
   <div class="summary-card">
-    <div class="summary-label">Realized P&amp;L (All time)</div>
+    <div class="summary-label">Short-term (YTD)</div>
+    <div class="summary-value mono <%= @realized_short_ytd >= 0 ? 'positive' : 'negative' %>">
+      <%= format_money(@realized_short_ytd) %>
+    </div>
+    <div class="summary-sub muted">Held ≤ 1 yr · ordinary-income tax</div>
+  </div>
+  <div class="summary-card">
+    <div class="summary-label">Long-term (YTD)</div>
+    <div class="summary-value mono <%= @realized_long_ytd >= 0 ? 'positive' : 'negative' %>">
+      <%= format_money(@realized_long_ytd) %>
+    </div>
+    <div class="summary-sub muted">Held > 1 yr · cap-gains rate</div>
+  </div>
+  <div class="summary-card">
+    <div class="summary-label">All time</div>
     <div class="summary-value mono <%= @realized_total >= 0 ? 'positive' : 'negative' %>">
       <%= format_money(@realized_total) %>
     </div>
@@ -41,11 +55,23 @@
         <th class="num">Shares</th>
         <th class="num">Price</th>
         <th class="num">Realized P&amp;L</th>
+        <th>Holding</th>
         <th>Notes</th>
       </tr>
     </thead>
     <tbody>
       <% @trades.reverse.each do |t| %>
+        <%
+          is_sell = t[:side] == 'sell'
+          # Holding-period summary across closed lots: 'short', 'long',
+          # 'mixed' if both, '—' for buys.
+          period = if is_sell && t[:lots_closed]
+                     periods = Array(t[:lots_closed]).map { |l| (l[:holding_period] || l['holding_period']).to_s }.compact.uniq
+                     periods.length > 1 ? 'mixed' : (periods.first || 'unknown')
+                   else
+                     nil
+                   end
+        %>
         <tr>
           <td class="mono"><%= t[:date] %></td>
           <td><a href="/analysis/<%= t[:symbol] %>"><%= t[:symbol] %></a></td>
@@ -57,10 +83,24 @@
           <td class="num mono"><%= t[:shares] %></td>
           <td class="num mono">$<%= format('%.2f', t[:price]) %></td>
           <td class="num mono <%= t[:realized_pl] && t[:realized_pl] >= 0 ? 'positive' : (t[:realized_pl] && t[:realized_pl] < 0 ? 'negative' : '') %>">
-            <% if t[:side] == 'sell' && t[:realized_pl] %>
+            <% if is_sell && t[:realized_pl] %>
               <%= format_money(t[:realized_pl]) %>
-              <% if t[:lots_closed] && t[:lots_closed].length > 1 %>
-                <span class="muted">(<%= t[:lots_closed].length %> lots)</span>
+              <% if t[:short_term_pl] && t[:long_term_pl] && (t[:short_term_pl].to_f != 0) && (t[:long_term_pl].to_f != 0) %>
+                <div class="muted" style="font-size: 0.78rem">
+                  ST <%= format_money(t[:short_term_pl]) %> · LT <%= format_money(t[:long_term_pl]) %>
+                </div>
+              <% end %>
+            <% else %>
+              <span class="muted">—</span>
+            <% end %>
+          </td>
+          <td>
+            <% if period %>
+              <span class="signal-badge holding-<%= period %>"><%= period %></span>
+              <% if t[:wash_sale_flags] && !t[:wash_sale_flags].empty? %>
+                <span class="signal-badge holding-wash" title="<%= WashSale.summarize_flag(t[:wash_sale_flags].first.transform_keys(&:to_sym)) %>">
+                  wash sale ⚠
+                </span>
               <% end %>
             <% else %>
               <span class="muted">—</span>
@@ -68,6 +108,19 @@
           </td>
           <td class="muted"><%= t[:notes] %></td>
         </tr>
+        <% if t[:wash_sale_flags] && !t[:wash_sale_flags].empty? %>
+          <tr class="wash-sale-detail-row">
+            <td colspan="8">
+              <div class="wash-sale-warning">
+                <% Array(t[:wash_sale_flags]).each do |flag_raw| %>
+                  <% flag = flag_raw.is_a?(Hash) ? flag_raw.transform_keys(&:to_sym) : flag_raw %>
+                  <% flag[:matching_buy] = (flag[:matching_buy] || flag['matching_buy']).transform_keys(&:to_sym) if (flag[:matching_buy] || flag['matching_buy']).is_a?(Hash) %>
+                  <%= WashSale.summarize_flag(flag) %><br>
+                <% end %>
+              </div>
+            </td>
+          </tr>
+        <% end %>
       <% end %>
     </tbody>
   </table>
