@@ -313,6 +313,76 @@
     });
   }
 
+  // ---- Portfolio value-over-time chart on /portfolio ---------------------
+  function initPortfolioHistory() {
+    const canvas = document.getElementById('portfolio-history-chart');
+    const series = window.PORTFOLIO_HISTORY;
+    if (!canvas || !series || series.length < 2) return;
+
+    const labels = series.map(function (p) { return p.date; });
+    const values = series.map(function (p) { return p.total_value; });
+
+    new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Portfolio value',
+          data: values,
+          borderColor: '#0071e3',
+          backgroundColor: '#0071e322',
+          borderWidth: 2,
+          pointRadius: 2,
+          pointHoverRadius: 5,
+          fill: true,
+          tension: 0.15,
+          spanGaps: true
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        scales: {
+          x: { ticks: { maxTicksLimit: 10, autoSkip: true } },
+          y: {
+            title: { display: true, text: 'Total value ($)' },
+            ticks: {
+              callback: function (v) {
+                if (Math.abs(v) >= 1e6) return '$' + (v / 1e6).toFixed(2) + 'M';
+                if (Math.abs(v) >= 1e3) return '$' + (v / 1e3).toFixed(0) + 'k';
+                return '$' + v.toFixed(0);
+              }
+            }
+          }
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) {
+                const point = series[ctx.dataIndex];
+                const lines = ['Total: $' + point.total_value.toLocaleString(undefined, { maximumFractionDigits: 2 })];
+                if (point.day_change != null) {
+                  const sign = point.day_change >= 0 ? '+' : '';
+                  const pctText = point.day_change_pct != null
+                    ? ' (' + sign + (point.day_change_pct * 100).toFixed(2) + '%)'
+                    : '';
+                  lines.push('Δ vs prior: ' + sign + '$' + Math.abs(point.day_change).toLocaleString(undefined, { maximumFractionDigits: 2 }) + pctText);
+                }
+                if (point.unrealized_pl != null) {
+                  const sign = point.unrealized_pl >= 0 ? '+' : '';
+                  lines.push('Unrealized P&L: ' + sign + '$' + Math.abs(point.unrealized_pl).toLocaleString(undefined, { maximumFractionDigits: 2 }));
+                }
+                return lines;
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+
   // ---- Lot detail expand/collapse on /portfolio --------------------------
   function initLotToggles() {
     document.querySelectorAll('.lot-toggle').forEach(function (btn) {
@@ -334,6 +404,7 @@
     initWatchlistButton();
     initAlerts();
     initCompare();
+    initPortfolioHistory();
     initLotToggles();
   });
 })();

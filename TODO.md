@@ -72,6 +72,16 @@
 - `/portfolio` summary cards split realized YTD by short vs long. `/trades` page shows holding-period badges + wash-sale warnings inline.
 - 22 new tests in [spec/tax_lot_spec.rb](spec/tax_lot_spec.rb).
 
+### [PR #12] — Portfolio value-over-time chart + per-position sparklines + Fidelity backfill
+- **PortfolioHistory** ([app/portfolio_history.rb](app/portfolio_history.rb)) — pivots `ImportSnapshotStore` snapshots into a total time series (date / total_value / total_cost / unrealized_pl / day-over-day delta) and a per-symbol time series for sparklines. Inline-SVG sparkline renderer (no JS dependency, green/red by direction).
+- **Value-over-time chart** at the top of `/portfolio` — Chart.js line chart of total portfolio value across every Fidelity snapshot, with hover tooltip showing date + total + Δ vs prior + unrealized P&L. Three summary cards (latest value, day-over-day change, unrealized P&L). Hidden until 2+ snapshots exist; single-snapshot empty state when only one.
+- **Trend column** on the positions table — inline-SVG sparkline per symbol with hover-tooltip carrying snapshot count + date range + total $/% change.
+- **`FidelityImporter.backfill_snapshots!`** — snapshots every Fidelity CSV that doesn't yet have a JSON snapshot, scanning BOTH `data/porfolio/fidelity/` (canonical input) AND `data/imports/fidelity/` (output dir, in case CSVs got dropped there by mistake). Does NOT touch PortfolioStore, the quote cache, or trigger historical prefetch — purely additive snapshot creation. Idempotent.
+- **Backfill button** on `/portfolio` (with pending-CSV count) + POST `/portfolio/import/fidelity/backfill` route + `GET /api/portfolio/history` JSON peer.
+- 24 new tests in [spec/portfolio_history_spec.rb](spec/portfolio_history_spec.rb).
+
+**Tests:** 427 examples, 0 failures across 16 spec files.
+
 ### [PR #11] — Tax-loss harvesting sub-page
 - **ProfileStore** ([app/profile_store.rb](app/profile_store.rb)) — single-user investment profile at `data/profile.json`. Fields: `current_age`, `retirement_age`, `risk_tolerance` (aggressive/moderate/conservative), `federal_ltcg_rate`, `federal_ordinary_rate`, optional `state_tax_rate`, `niit_applies`. Range-validated; mutex + atomic write.
 - **TaxHarvester** ([app/tax_harvester.rb](app/tax_harvester.rb)) — analysis engine that ranks open underwater lots by estimated tax savings (loss × marginal rate, ST = ordinary, LT = LTCG, +state +NIIT if configured), detects lots crossing ST→LT in ≤ 30 days, summarises YTD realised against the $3 k ordinary-offset cap, and emits per-candidate `harvest` / `wait` / `skip` recommendations branched on risk tolerance, holding period, days-to-LT, and wash-sale risk.
@@ -80,7 +90,7 @@
 - **Routes**: `GET /portfolio/tax-harvest` (HTML), `GET /api/portfolio/tax-harvest` (JSON), `POST /profile` (form), `POST /api/profile` (JSON). Cache-only — no provider fan-out on render.
 - 42 new tests in [spec/tax_harvest_spec.rb](spec/tax_harvest_spec.rb) (ProfileStore validation/persistence + TaxHarvester candidate/threshold/YTD math + route-render smoke + form/JSON profile updates).
 
-**Tests:** 403 examples, 0 failures across 15 spec files.
+**Tests:** 403 examples, 0 failures across 15 spec files. (Superseded by PR #12 — see above.)
 
 ---
 

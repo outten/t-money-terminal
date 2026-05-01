@@ -19,6 +19,7 @@ require_relative 'profile_store'
 require_relative 'tax_harvester'
 require_relative 'fidelity_importer'
 require_relative 'import_snapshot_store'
+require_relative 'portfolio_history'
 require_relative 'portfolio_diff'
 require_relative 'refresh_universe'
 require_relative 'refresh_tracker'
@@ -403,6 +404,11 @@ class TMoneyTerminal < Sinatra::Base
     @import_skipped   = params['imported_skipped']&.to_i
     @import_prefetch  = params['prefetch_started']&.to_i
     @latest_fidelity  = FidelityImporter.latest_file_in
+    @backfill_pending = FidelityImporter.pending_backfill_count
+    @backfill_count   = params['backfill_count']&.to_i
+    @backfill_errors  = params['backfill_errors']&.to_i
+    @history_series   = PortfolioHistory.time_series(source: 'fidelity')
+    @history_per_sym  = PortfolioHistory.per_symbol_series(source: 'fidelity')
     erb :portfolio
   end
 
@@ -604,6 +610,32 @@ class TMoneyTerminal < Sinatra::Base
   # authoritative), registers unknown tickers as SymbolIndex extensions, and
   # primes the quote cache with the file's Last Price so the page renders
   # fast even when live providers are throttled.
+  # Snapshot every unsnapshotted Fidelity CSV without touching PortfolioStore
+  # or quote/historical caches. Each CSV represents a past day's holdings,
+  # not the current state — backfilling lets the value-over-time chart and
+  # per-position sparklines on /portfolio actually have history to render.
+  # See FidelityImporter.backfill_snapshots! for the policy.
+  post '/portfolio/import/fidelity/backfill' do
+    begin
+      result = FidelityImporter.backfill_snapshots!
+      qs = "backfill_count=#{result[:snapshotted].length}" \
+           "&backfill_errors=#{result[:errors].length}"
+      redirect "/portfolio?#{qs}", 302
+    rescue StandardError => e
+      warn "[fidelity backfill] #{e.class}: #{e.message}" unless ENV['RACK_ENV'] == 'test'
+      redirect "/portfolio?imported_error=#{URI.encode_www_form_component(e.message)}", 302
+    end
+  end
+
+  get '/api/portfolio/history' do
+    content_type :json
+    {
+      time_series:    PortfolioHistory.time_series(source: 'fidelity'),
+      per_symbol:     PortfolioHistory.per_symbol_series(source: 'fidelity'),
+      generated_at:   Time.now.utc.iso8601
+    }.to_json
+  end
+
   post '/portfolio/import/fidelity' do
     begin
       summary = FidelityImporter.import!

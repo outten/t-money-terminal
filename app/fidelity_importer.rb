@@ -1,5 +1,6 @@
 require 'csv'
 require 'date'
+require 'set'
 require_relative 'symbol_index'
 require_relative 'portfolio_store'
 require_relative 'market_data_service'
@@ -267,5 +268,58 @@ module FidelityImporter
     summary[:prefetch_started] = thread ? symbols_to_prefetch.length : 0
 
     summary
+  end
+
+  # Backfill snapshots for every CSV that doesn't already have a JSON
+  # snapshot in `data/imports/fidelity/`. Unlike `import!`, this:
+  #
+  #   - Does NOT mutate PortfolioStore. A historical CSV represents a past
+  #     day's holdings, not the current state.
+  #   - Does NOT prime quote caches or kick off historical prefetch.
+  #   - Only writes snapshots so `/portfolio` can render a value-over-time
+  #     chart and per-position sparklines from the snapshot history.
+  #
+  # We scan the canonical input dir (`data/porfolio/fidelity/`) AND the
+  # snapshot output dir (`data/imports/fidelity/`) — users sometimes drop
+  # CSVs into the output dir by mistake; rather than fail, we pick them up.
+  #
+  # Returns:
+  #   { snapshotted: [basename, ...], skipped_existing: [basename, ...],
+  #     errors: [{path:, error:}, ...] }
+  def backfill_snapshots!
+    out = { snapshotted: [], skipped_existing: [], errors: [] }
+    pending_backfill_paths.each do |path|
+      basename = File.basename(path, '.csv')
+      begin
+        parsed = parse(path)
+        ImportSnapshotStore.write(
+          source:   'fidelity',
+          basename: basename,
+          data:     parsed
+        )
+        out[:snapshotted] << basename
+      rescue StandardError => e
+        out[:errors] << { path: path, error: "#{e.class}: #{e.message}" }
+      end
+    end
+    out
+  end
+
+  # CSVs in either the input or the output dir that don't yet have a JSON
+  # snapshot. Used by `backfill_snapshots!` and the /portfolio button.
+  def pending_backfill_paths
+    candidate_dirs = [default_dir, ImportSnapshotStore.source_dir('fidelity')].uniq
+    snapshot_basenames = Dir.glob(File.join(ImportSnapshotStore.source_dir('fidelity'), '*.json'))
+                            .map { |p| File.basename(p, '.json') }
+                            .to_set
+
+    candidate_dirs.flat_map { |dir|
+      next [] unless Dir.exist?(dir)
+      Dir.glob(File.join(dir, '*.csv')).reject { |p| snapshot_basenames.include?(File.basename(p, '.csv')) }
+    }.uniq.sort_by { |p| extract_date_from_filename(p) || Date.new(0) }
+  end
+
+  def pending_backfill_count
+    pending_backfill_paths.length
   end
 end
