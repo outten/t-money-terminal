@@ -80,6 +80,14 @@ What happens:
 
 After your second import you can visit `/portfolio/drift` to see what changed: positions added, sold, scaled up/down — sorted biggest-mover-first.
 
+### Backfilling history from older CSVs
+
+If you've collected a stack of `Portfolio_Positions_*.csv` files from prior days (e.g. dropping a week's worth at once after market close), `/portfolio` shows a **"Backfill N CSVs into snapshots"** button whenever there's at least one CSV without a matching JSON snapshot. Clicking it parses each pending CSV and writes the JSON snapshot — but does NOT touch your current portfolio, the quote cache, or trigger historical prefetch. Each historical CSV represents a past day's holdings, not the current state, so the importer's regular reconciliation logic stays out of the way.
+
+Once 2+ snapshots exist, the **value-over-time chart** at the top of `/portfolio` lights up (one data point per import, with day-over-day delta in the tooltip), and the positions table grows a **Trend column** with a small green/red sparkline per symbol showing its market-value trajectory across the snapshot history.
+
+The backfill button scans both `data/porfolio/fidelity/` (the canonical CSV input dir) and `data/imports/fidelity/` (the snapshot output dir), so dropping CSVs in either place still works.
+
 ---
 
 ## 6a. Tax-loss harvesting

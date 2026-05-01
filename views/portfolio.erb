@@ -13,6 +13,14 @@
     historicals prefetching for <%= @import_prefetch %> symbol<%= @import_prefetch == 1 ? '' : 's' %>
     in the background (<a href="/admin/health">progress</a>)<% end %>.
   </div>
+<% elsif @backfill_count && @backfill_count > 0 %>
+  <div class="degradation-banner" role="status" style="background:#d1f0d1; color:#1d4620; border-color:#a3d8a3">
+    <strong>✓ Backfilled <%= @backfill_count %> snapshot<%= @backfill_count == 1 ? '' : 's' %></strong>
+    from CSVs. The value-over-time chart and sparklines below now have history.
+    <% if @backfill_errors && @backfill_errors > 0 %>
+      <strong style="color:#a02020">· <%= @backfill_errors %> failed to parse</strong>
+    <% end %>
+  </div>
 <% elsif params['imported_error'] %>
   <div class="degradation-banner" role="alert">
     <strong>Import failed:</strong> <%= params['imported_error'] %>
@@ -41,7 +49,83 @@
       <% end %>
     </span>
   </form>
+
+  <% if @backfill_pending && @backfill_pending > 0 %>
+    <form action="/portfolio/import/fidelity/backfill" method="post" class="fidelity-import-form" style="margin-top: 10px">
+      <button type="submit" class="btn-primary"
+              onclick="return confirm('Backfill <%= @backfill_pending %> CSV(s) into snapshots?\nThis only writes JSON snapshots — it does NOT change your current portfolio, quote cache, or trigger historical prefetch.');">
+        Backfill <%= @backfill_pending %> CSV<%= @backfill_pending == 1 ? '' : 's' %> into snapshots
+      </button>
+      <span class="data-source">
+        Found <%= @backfill_pending %> Fidelity CSV<%= @backfill_pending == 1 ? '' : 's' %> without a JSON snapshot — backfilling makes them appear in the value-over-time chart and per-position sparklines below. Won't touch your current portfolio.
+      </span>
+    </form>
+  <% end %>
 </section>
+
+<% if @history_series && @history_series.length >= 2 %>
+  <section class="benchmark-section" style="margin-top: 18px">
+    <h3>Portfolio value over time
+      <% latest = @history_series.last; first = @history_series.first %>
+      <% total_chg = (latest[:total_value] - first[:total_value]).round(2) %>
+      <% total_chg_pct = first[:total_value].positive? ? ((latest[:total_value] - first[:total_value]) / first[:total_value]) : nil %>
+      <span class="muted" style="font-size:0.78rem; font-weight:normal">
+        &middot; <%= @history_series.length %> snapshot<%= @history_series.length == 1 ? '' : 's' %>
+        &middot; <%= first[:date] %> → <%= latest[:date] %>
+        &middot; <span class="<%= total_chg >= 0 ? 'positive' : 'negative' %>">
+          <%= format_money(total_chg) %><% if total_chg_pct %> (<%= format_percent(total_chg_pct) %>)<% end %>
+        </span>
+      </span>
+    </h3>
+    <div class="portfolio-summary">
+      <% last_pt = @history_series.last %>
+      <div class="summary-card">
+        <div class="summary-label">Latest snapshot value</div>
+        <div class="summary-value mono"><%= format_money(last_pt[:total_value]) %></div>
+        <div class="summary-sub muted">on <%= last_pt[:date] %></div>
+      </div>
+      <% if last_pt[:day_change] %>
+        <div class="summary-card">
+          <div class="summary-label">Day-over-day change</div>
+          <div class="summary-value mono <%= last_pt[:day_change] >= 0 ? 'positive' : 'negative' %>">
+            <%= format_money(last_pt[:day_change]) %>
+            <% if last_pt[:day_change_pct] %>
+              <span class="summary-sub">(<%= format_percent(last_pt[:day_change_pct]) %>)</span>
+            <% end %>
+          </div>
+          <div class="summary-sub muted">vs prior snapshot</div>
+        </div>
+      <% end %>
+      <div class="summary-card">
+        <div class="summary-label">Unrealized P&amp;L (latest)</div>
+        <div class="summary-value mono <%= last_pt[:unrealized_pl] >= 0 ? 'positive' : 'negative' %>">
+          <%= format_money(last_pt[:unrealized_pl]) %>
+          <% if last_pt[:unrealized_pl_pct] %>
+            <span class="summary-sub">(<%= format_percent(last_pt[:unrealized_pl_pct]) %>)</span>
+          <% end %>
+        </div>
+      </div>
+    </div>
+
+    <div style="position: relative; height: 280px; margin-top: 14px">
+      <canvas id="portfolio-history-chart" aria-label="Portfolio value over time"></canvas>
+    </div>
+    <p class="data-source">
+      One data point per import, not per market day — gaps between imports aren't interpolated.
+      Direction reflects total market value of all snapshot positions (broker-reported `current_value` when present).
+    </p>
+    <script>
+      window.PORTFOLIO_HISTORY = <%= @history_series.to_json %>;
+    </script>
+  </section>
+<% elsif @history_series && @history_series.length == 1 %>
+  <section class="benchmark-section" style="margin-top: 18px">
+    <h3>Portfolio value over time</h3>
+    <p class="data-source">
+      Only <strong>one snapshot</strong> on file (<%= @history_series.first[:date] %>) — at least two are needed for a trajectory. Drop more <code>Portfolio_Positions_*.csv</code> in <code>data/porfolio/fidelity/</code> and click the backfill button above.
+    </p>
+  </section>
+<% end %>
 
 <% if @rows.empty? %>
   <div class="notice">No open positions. Buy your first lot below.</div>
@@ -191,6 +275,7 @@
         <th class="num">P&amp;L %</th>
         <th class="num">Day</th>
         <th class="num">Weight</th>
+        <th>Trend</th>
         <th>Signal</th>
         <th>Notes</th>
         <th class="num">Lots</th>
@@ -215,6 +300,20 @@
           </td>
           <td class="num mono"><%= r[:day_change] || '—' %></td>
           <td class="num mono"><%= r[:weight] ? format_percent(r[:weight], digits: 1) : '—' %></td>
+          <td>
+            <% sym_series = (@history_per_sym && @history_per_sym[r[:symbol]]) || [] %>
+            <% if sym_series.length >= 2 %>
+              <% first_val = sym_series.first[:market_value].to_f %>
+              <% last_val  = sym_series.last[:market_value].to_f %>
+              <% sym_change = (last_val - first_val).round(2) %>
+              <% sym_change_pct = first_val.positive? ? ((last_val - first_val) / first_val) : nil %>
+              <span title="<%= sym_series.length %> snapshots · <%= sym_series.first[:date] %> → <%= sym_series.last[:date] %> · <%= format_money(sym_change) %><%= sym_change_pct ? " (#{format_percent(sym_change_pct)})" : '' %>">
+                <%= PortfolioHistory.sparkline_svg(sym_series) %>
+              </span>
+            <% else %>
+              <span class="muted">—</span>
+            <% end %>
+          </td>
           <td>
             <span class="signal-badge signal-<%= (r[:recommendation] || 'HOLD').downcase %>">
               <%= r[:recommendation] || 'HOLD' %>
@@ -245,7 +344,7 @@
 
         <!-- Expandable lot detail row -->
         <tr id="lots-<%= r[:symbol] %>" class="lot-detail-row" hidden>
-          <td colspan="13">
+          <td colspan="14">
             <div class="lot-detail-wrap">
               <table class="lot-detail-table">
                 <thead>
