@@ -72,7 +72,15 @@
 - `/portfolio` summary cards split realized YTD by short vs long. `/trades` page shows holding-period badges + wash-sale warnings inline.
 - 22 new tests in [spec/tax_lot_spec.rb](spec/tax_lot_spec.rb).
 
-**Tests:** 356 examples, 0 failures across 14 spec files.
+### [PR #11] — Tax-loss harvesting sub-page
+- **ProfileStore** ([app/profile_store.rb](app/profile_store.rb)) — single-user investment profile at `data/profile.json`. Fields: `current_age`, `retirement_age`, `risk_tolerance` (aggressive/moderate/conservative), `federal_ltcg_rate`, `federal_ordinary_rate`, optional `state_tax_rate`, `niit_applies`. Range-validated; mutex + atomic write.
+- **TaxHarvester** ([app/tax_harvester.rb](app/tax_harvester.rb)) — analysis engine that ranks open underwater lots by estimated tax savings (loss × marginal rate, ST = ordinary, LT = LTCG, +state +NIIT if configured), detects lots crossing ST→LT in ≤ 30 days, summarises YTD realised against the $3 k ordinary-offset cap, and emits per-candidate `harvest` / `wait` / `skip` recommendations branched on risk tolerance, holding period, days-to-LT, and wash-sale risk.
+- **Replacement-security map** — heuristic different-INDEX swaps to dodge the wash-sale rule (SPY → VTI, QQQ → VUG/SCHG, SCHD → VYM/HDV, etc.). Same-INDEX trios (SPY ↔ VOO ↔ IVV) are intentionally NOT recommended as replacements.
+- **`/portfolio/tax-harvest` page** ([views/tax_harvest.erb](views/tax_harvest.erb)) — profile summary (5 cards), inline profile config form, YTD realised summary with $3 k cap progress, ST→LT crossing watchlist, ranked candidates table with recommendation + reason + wash flag + replacement links, and a prominent "decision support, not tax advice" disclaimer.
+- **Routes**: `GET /portfolio/tax-harvest` (HTML), `GET /api/portfolio/tax-harvest` (JSON), `POST /profile` (form), `POST /api/profile` (JSON). Cache-only — no provider fan-out on render.
+- 42 new tests in [spec/tax_harvest_spec.rb](spec/tax_harvest_spec.rb) (ProfileStore validation/persistence + TaxHarvester candidate/threshold/YTD math + route-render smoke + form/JSON profile updates).
+
+**Tests:** 403 examples, 0 failures across 15 spec files.
 
 ---
 
