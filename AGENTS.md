@@ -33,7 +33,7 @@ See [CREDENTIALS.md](CREDENTIALS.md) for the full walkthrough including FMP free
 make install                 # bundle install
 make run                     # auto-reload via rerun → http://localhost:4567 (alias: make dev)
 make serve                   # one-shot run, no auto-reload
-make test                    # RSpec — currently 334 examples
+make test                    # RSpec — currently 356 examples
 make refresh-cache           # warm market-data cache for the universe
 make refresh-providers       # warm FMP / FRED / News / Stooq
 make refresh-all             # both — REGIONS ∪ portfolio ∪ watchlist
@@ -96,8 +96,8 @@ If you change `valuate_position` or `annotate_portfolio_signals!`, run [spec/por
 
 | Store | File | Purpose |
 |---|---|---|
-| [PortfolioStore](app/portfolio_store.rb) | `data/portfolio.json` | Multi-lot positions; FIFO close; closed lots retained inline for audit |
-| [TradesStore](app/trades_store.rb) | `data/trades.json` | Append-only BUY/SELL log with realized-P&L breakdown |
+| [PortfolioStore](app/portfolio_store.rb) | `data/portfolio.json` | Multi-lot positions; FIFO close (tax-aware: each closed lot tagged with holding_period via [TaxLot](app/tax_lot.rb)); closed lots retained inline for audit |
+| [TradesStore](app/trades_store.rb) | `data/trades.json` | Append-only BUY/SELL log; SELLs include short/long-term P&L split + [WashSale](app/wash_sale.rb) flags |
 | [WatchlistStore](app/watchlist_store.rb) | `data/watchlist.json` | Ordered, deduped symbol list |
 | [AlertsStore](app/alerts_store.rb) | `data/alerts.json` | Threshold alerts; triggered alerts append to `alerts_triggered.log` |
 | [SymbolIndex](app/symbol_index.rb) | `data/symbols_extended.json` | Runtime ticker discovery extensions |
@@ -149,7 +149,10 @@ app/
   analytics/               # Indicators, risk, Black-Scholes (pure Ruby)
   symbol_index.rb          # Curated + REGIONS + runtime extensions; TICKER_PATTERN guard
   portfolio_store.rb       # Multi-lot; FIFO close
-  trades_store.rb          # Append-only history
+  trades_store.rb          # Append-only history (short/long-term + wash-sale flags)
+  tax_lot.rb               # Holding-period classifier (short ≤ 1yr / long > 1yr)
+  wash_sale.rb             # IRS wash-sale risk flagging on loss-sells (±30d)
+  analytics/benchmark.rb   # Lot-weighted portfolio return vs SPY (cache-only)
   fidelity_importer.rb     # Broker CSV → reconciliation
   import_snapshot_store.rb # Per-source snapshot persistence
   portfolio_diff.rb        # Snapshot-to-snapshot drift math
@@ -161,7 +164,7 @@ app/
 views/                     # ERB templates
 public/                    # style.css + app.js (chart) + features.js (search/watchlist/alerts/portfolio)
 scripts/                   # refresh_cache, refresh_providers, scheduler, check_alerts, cache_status
-spec/                      # 13 spec files, 334 examples
+spec/                      # 14 spec files, 356 examples (tax_lot_spec.rb covers TaxLot, WashSale, Analytics::Benchmark)
 data/                      # All app state (git-ignored except hierarchical cache structure markers)
 .github/workflows/ci.yml   # GitHub Actions — RSpec + scripts syntax check on push to main + every PR
 ```
@@ -169,7 +172,7 @@ data/                      # All app state (git-ignored except hierarchical cach
 ## Testing
 
 ```bash
-make test                                  # full suite (334 examples, 0 failures)
+make test                                  # full suite (356 examples, 0 failures)
 bundle exec rspec spec/feature_spec.rb     # one file
 bundle exec rspec spec/feature_spec.rb:42  # one example
 ```

@@ -251,6 +251,15 @@ class MarketDataService
       @cache[sym] || @persistent_cache[sym] || build_quote_from_snapshot(sym)
     end
 
+    # Cache-only historical read — same contract as `quote_cached` but for
+    # candle bars. Returns whatever's in the live or persistent cache (any
+    # age) without firing the provider waterfall. Returns nil if no bars
+    # are cached. Used by Analytics::Benchmark on /portfolio render.
+    def historical_cached(symbol, period = '1y')
+      key = "candle:#{symbol}:#{period}"
+      @cache[key] || @persistent_cache[key]
+    end
+
     # Seed the quote cache directly with externally-supplied data (e.g. a
     # broker CSV import). Stores in both live and persistent caches so the
     # next render is instant regardless of upstream provider state. Mirrors

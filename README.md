@@ -40,12 +40,16 @@ Zero API cost — runs off cached bars.
 
 TradingView [lightweight-charts](https://www.tradingview.com/lightweight-charts/) (CDN, MIT) — four equal-height synchronized panes (price + SMA 20/50/200 + Bollinger, volume coloured by candle direction, RSI(14) with 30/70 reference lines, MACD(12/26/9) line + signal + histogram). Crosshair OHLCV readout, period toggle (1d / 1m / 3m / YTD / 1y / 5y), log-scale toggle, dark-mode palette swap.
 
-### Portfolio (multi-lot, FIFO)
+### Portfolio (multi-lot, FIFO, tax-aware)
 
 - [PortfolioStore](app/portfolio_store.rb) — every BUY creates a new lot with its own cost basis and acquired_at; aggregated views sum across lots with weighted-average cost and a per-lot drill-down
 - **FIFO close** on SELL — `close_shares_fifo` walks open lots oldest-first, splits the last one if partially closed, returns the realized-P&L breakdown per closed lot
-- [TradesStore](app/trades_store.rb) — append-only history at `data/trades.json`; YTD + lifetime realized-P&L cards
+- **Tax-lot classification** — every closed lot is tagged short-term (held ≤ 1 yr) or long-term (held > 1 yr); `/portfolio` and `/trades` split realized P&L YTD by holding period (always visible, even with no sells yet). Each open lot's expandable detail also shows **"Tax (if sold today)"** with current holding period + days-to-long-term countdown for short-term lots. For Fidelity-imported lots without an explicit acquisition date, [TaxLot](app/tax_lot.rb) falls back to the earliest broker snapshot containing the symbol.
+- **Wash-sale flagging** — SELLs at a loss are scanned for same-symbol BUYs within ±30 days; flags persist on the trade record with the recommended resume date and surface inline on `/trades`. See [WashSale](app/wash_sale.rb). Same-symbol matching only — "substantially identical" mutual funds / options are out of scope.
+- **Benchmark comparison** — `/portfolio` shows your lot-weighted return-since-acquired vs SPY return over the same window, plus alpha. Pure cache-only computation via [Analytics::Benchmark](app/analytics/benchmark.rb).
+- [TradesStore](app/trades_store.rb) — append-only history at `data/trades.json`; YTD + lifetime realized-P&L cards split by short-term / long-term.
 - **Drift view** at `/portfolio/drift` — what changed between your two most recent broker imports (added / removed / scaled, sorted biggest-mover-first)
+- **Sell preview** — `POST /api/portfolio/sell/preview` returns the breakdown (short/long P&L + wash-sale flags) without committing.
 
 ### Broker import (Fidelity)
 
@@ -139,7 +143,7 @@ See [CREDENTIALS.md](CREDENTIALS.md) for signup walkthroughs and the FMP free-ti
 ### Common tasks
 
 ```bash
-make test                        # RSpec suite (currently 334 examples)
+make test                        # RSpec suite (currently 356 examples)
 make refresh-cache               # Warm market-data cache for the universe
 make refresh-providers           # Warm FMP / FRED / News / Stooq caches
 make refresh-all                 # Both, in one shot — REGIONS ∪ portfolio ∪ watchlist
@@ -164,7 +168,9 @@ app/
   analytics/                  # Indicators, risk, Black-Scholes (pure Ruby)
   symbol_index.rb             # Curated + REGIONS + runtime extension store; ticker-pattern guard
   portfolio_store.rb          # Multi-lot positions; FIFO close
-  trades_store.rb             # Append-only trade history
+  trades_store.rb             # Append-only trade history (with short/long-term subtotals)
+  tax_lot.rb                  # Holding-period classifier + earliest-snapshot fallback
+  wash_sale.rb                # IRS wash-sale risk flagging on loss-sells
   fidelity_importer.rb        # Broker CSV parser + reconciliation orchestrator
   import_snapshot_store.rb    # Per-source snapshot persistence (audit + drift)
   portfolio_diff.rb           # Snapshot-to-snapshot diff math
@@ -176,7 +182,7 @@ app/
 views/                        # ERB templates with shared layout
 public/                       # style.css, app.js (chart), features.js (search/watchlist/alerts/portfolio)
 scripts/                      # refresh_cache, refresh_providers, scheduler, check_alerts, cache_status
-spec/                         # RSpec — 334 examples across 13 spec files
+spec/                         # RSpec — 356 examples across 14 spec files
 data/cache/                   # Hierarchical disk cache
 data/imports/                 # Broker import snapshots (audit + drift)
 data/porfolio/fidelity/       # Drop your Fidelity Portfolio_Positions_*.csv here

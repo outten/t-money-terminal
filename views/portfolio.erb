@@ -73,6 +73,104 @@
     </div>
   </section>
 
+  <% if @benchmark && @benchmark[:portfolio_return] %>
+    <section class="benchmark-section">
+      <h3>Benchmark Comparison</h3>
+      <div class="portfolio-summary">
+        <div class="summary-card">
+          <div class="summary-label">Your portfolio return</div>
+          <div class="summary-value mono <%= @benchmark[:portfolio_return] >= 0 ? 'positive' : 'negative' %>">
+            <%= format_percent(@benchmark[:portfolio_return]) %>
+          </div>
+          <div class="summary-sub muted">Lot-weighted, since acquisition</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label"><%= @benchmark[:benchmark] %> over same window</div>
+          <div class="summary-value mono <%= @benchmark[:benchmark_return] >= 0 ? 'positive' : 'negative' %>">
+            <%= format_percent(@benchmark[:benchmark_return]) %>
+          </div>
+          <div class="summary-sub muted">If you'd held SPY at the same dates</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">Alpha</div>
+          <div class="summary-value mono <%= @benchmark[:alpha] >= 0 ? 'positive' : 'negative' %>">
+            <%= format_percent(@benchmark[:alpha]) %>
+          </div>
+          <div class="summary-sub muted">Your return − benchmark</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">Lots priced</div>
+          <div class="summary-value mono">
+            <%= @benchmark[:lots_priced] %>
+            <% if @benchmark[:lots_skipped] && @benchmark[:lots_skipped] > 0 %>
+              / <%= @benchmark[:lots_priced] + @benchmark[:lots_skipped] %>
+            <% end %>
+          </div>
+          <% if @benchmark[:as_of] %>
+            <div class="summary-sub muted">As of <%= @benchmark[:as_of] %></div>
+          <% end %>
+        </div>
+      </div>
+      <% if @benchmark[:lots_skipped] && @benchmark[:lots_skipped] > 0 %>
+        <p class="data-source">
+          <%= @benchmark[:lots_skipped] %> lot<%= @benchmark[:lots_skipped] == 1 ? '' : 's' %> skipped:
+          either current price unavailable or no <%= @benchmark[:benchmark] %> bar at the lot's acquired date
+          (Fidelity-imported lots without an explicit acquisition date fall back to the earliest snapshot — older
+          lots may pre-date that and get excluded). All zero-cost-basis or no-shares lots are also skipped.
+        </p>
+      <% end %>
+    </section>
+  <% end %>
+
+  <section class="benchmark-section">
+    <h3>Realized P&amp;L (YTD by holding period) &middot; Tax + wash-sale</h3>
+    <div class="portfolio-summary">
+      <div class="summary-card">
+        <div class="summary-label">Short-term</div>
+        <div class="summary-value mono <%= @realized_short_ytd > 0 ? 'positive' : (@realized_short_ytd < 0 ? 'negative' : '') %>">
+          <%= format_money(@realized_short_ytd) %>
+        </div>
+        <div class="summary-sub muted">Held ≤ 1 yr · ordinary-income tax</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Long-term</div>
+        <div class="summary-value mono <%= @realized_long_ytd > 0 ? 'positive' : (@realized_long_ytd < 0 ? 'negative' : '') %>">
+          <%= format_money(@realized_long_ytd) %>
+        </div>
+        <div class="summary-sub muted">Held > 1 yr · cap-gains rate</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Total YTD</div>
+        <div class="summary-value mono <%= @realized_ytd > 0 ? 'positive' : (@realized_ytd < 0 ? 'negative' : '') %>">
+          <%= format_money(@realized_ytd) %>
+        </div>
+        <div class="summary-sub muted"><a href="/trades">All trades →</a></div>
+      </div>
+    </div>
+    <% if @realized_short_ytd == 0 && @realized_long_ytd == 0 && @realized_ytd == 0 %>
+      <p class="data-source">
+        No realized gains or losses yet this year — these will populate once you record a SELL.
+        Each closed lot is automatically tagged short-term (≤ 1 yr) or long-term (> 1 yr); the YTD
+        split shows what flows where on your tax forms.
+      </p>
+    <% end %>
+    <p class="data-source">
+      <strong>Wash-sale warnings</strong> are surfaced on <a href="/trades">/trades</a> next to any SELL recorded
+      at a loss when there's a same-symbol BUY within ±30 days. The <strong>Sell</strong> form on each row
+      below also flags these on submit. Per-lot tax preview (would-be short / long if sold today) appears
+      in each position's expandable lot detail.
+    </p>
+  </section>
+
+  <details class="positions-collapsible">
+    <summary class="positions-collapsible-summary">
+      <span class="positions-chevron" aria-hidden="true">▸</span>
+      <span class="positions-summary-text">
+        <strong>All positions</strong>
+        (<%= @rows.length %>)
+        <span class="muted">— click to show / hide</span>
+      </span>
+    </summary>
   <table class="data-table portfolio-table">
     <thead>
       <tr>
@@ -150,6 +248,7 @@
                     <th class="num">Lot Cost</th>
                     <th class="num">Lot Value</th>
                     <th class="num">Lot P&amp;L</th>
+                    <th>Tax (if sold today)</th>
                     <th>Notes</th>
                     <th></th>
                   </tr>
@@ -159,6 +258,9 @@
                     <% lot_cost  = (lot[:shares].to_f * lot[:cost_basis].to_f).round(2) %>
                     <% lot_value = r[:current_price] ? (lot[:shares].to_f * r[:current_price].to_f).round(2) : nil %>
                     <% lot_pl    = lot_value ? (lot_value - lot_cost).round(2) : nil %>
+                    <% tax_today = TaxLot.classify(lot: lot, sold_at: Date.today.iso8601) %>
+                    <% days_to_long = tax_today[:holding_period] == 'short' && tax_today[:days_held] ?
+                                       (TaxLot::LONG_TERM_THRESHOLD_DAYS + 1 - tax_today[:days_held]) : nil %>
                     <tr>
                       <td><%= lot[:acquired_at] || lot[:created_at][0,10] %></td>
                       <td class="num mono"><%= lot[:shares] %></td>
@@ -167,6 +269,20 @@
                       <td class="num mono"><%= lot_value ? format_money(lot_value) : '—' %></td>
                       <td class="num mono <%= lot_pl && lot_pl >= 0 ? 'positive' : (lot_pl && lot_pl < 0 ? 'negative' : '') %>">
                         <%= lot_pl ? format_money(lot_pl) : '—' %>
+                      </td>
+                      <td>
+                        <span class="signal-badge holding-<%= tax_today[:holding_period] %>"><%= tax_today[:holding_period] %></span>
+                        <% if tax_today[:days_held] %>
+                          <span class="muted" style="font-size:0.78rem">
+                            held <%= tax_today[:days_held] %>d
+                            <% if days_to_long && days_to_long > 0 %>
+                              · long-term in <%= days_to_long %>d
+                            <% end %>
+                          </span>
+                        <% end %>
+                        <% if tax_today[:source] == 'snapshot' %>
+                          <span class="muted" style="font-size:0.72rem" title="Acquisition date inferred from earliest broker snapshot">(inferred)</span>
+                        <% end %>
                       </td>
                       <td class="muted"><%= lot[:notes] %></td>
                       <td>
@@ -202,6 +318,7 @@
       <% end %>
     </tbody>
   </table>
+  </details>
 <% end %>
 
 <section class="portfolio-add">

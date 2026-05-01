@@ -2,3 +2,4 @@
 require_relative 'analytics/indicators'
 require_relative 'analytics/risk'
 require_relative 'analytics/black_scholes'
+require_relative 'analytics/benchmark'

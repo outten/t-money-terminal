@@ -14,6 +14,7 @@ require_relative 'watchlist_store'
 require_relative 'alerts_store'
 require_relative 'portfolio_store'
 require_relative 'trades_store'
+require_relative 'wash_sale'
 require_relative 'fidelity_importer'
 require_relative 'import_snapshot_store'
 require_relative 'portfolio_diff'
@@ -383,7 +384,18 @@ class TMoneyTerminal < Sinatra::Base
     @snapshot_count  = ImportSnapshotStore.list(source: 'fidelity').length
     merge_broker_fields!(@rows, @latest_snapshot)
     annotate_portfolio_signals!(@rows, @totals)
-    @realized_ytd     = TradesStore.realized_pl_ytd
+    @realized_ytd          = TradesStore.realized_pl_ytd
+    @realized_short_ytd    = TradesStore.realized_pl_short_term_ytd
+    @realized_long_ytd     = TradesStore.realized_pl_long_term_ytd
+    # Cache-only benchmark read — never fires providers on /portfolio render.
+    # If the SPY 5y cache is empty, the panel is hidden until the next
+    # scheduler run / explicit refresh / analysis-page visit warms it.
+    @benchmark = safe_fetch do
+      Analytics::Benchmark.compare(
+        @rows,
+        bars_for: ->(sym) { MarketDataService.historical_cached(sym, '5y') }
+      )
+    end
     @import_count     = params['imported_count']&.to_i
     @import_file_date = params['imported_file']
     @import_skipped   = params['imported_skipped']&.to_i
@@ -444,10 +456,51 @@ class TMoneyTerminal < Sinatra::Base
         price:   (body['price']   || params['price']),
         sold_at: (body['sold_at'] || params['sold_at'])
       )
-      TradesStore.record_sell(breakdown, notes: (body['notes'] || params['notes']))
-      breakdown.to_json
+      flags = safe_fetch { WashSale.check(breakdown) } || []
+      TradesStore.record_sell(breakdown,
+                              notes: (body['notes'] || params['notes']),
+                              wash_sale_flags: flags)
+      breakdown.merge(wash_sale_flags: flags).to_json
     rescue ArgumentError => e
       halt 400, { error: e.message }.to_json
+    end
+  end
+
+  # Dry-run a sell — same FIFO + tax classification + wash-sale check
+  # logic, but doesn't mutate PortfolioStore or TradesStore. Used by the
+  # sell preview UI so the user can see the breakdown (short-term loss,
+  # wash-sale warning, etc.) before committing.
+  post '/api/portfolio/sell/preview' do
+    content_type :json
+    body = request_json
+    sym  = (body['symbol'] || params['symbol']).to_s.upcase
+    halt 404, { error: 'Unknown symbol' }.to_json unless SymbolIndex.known?(sym)
+
+    begin
+      shares  = Float(body['shares']  || params['shares'])
+      price   = Float(body['price']   || params['price'])
+      sold_at = (body['sold_at'] || params['sold_at']).to_s
+    rescue ArgumentError => e
+      halt 400, { error: e.message }.to_json
+    end
+
+    # Snapshot in-memory state, do the close, capture the breakdown, then
+    # restore. PortfolioStore writes to disk inside `synchronize`, so we
+    # persist the snapshot to disk and restore it on the way out.
+    state_before = File.exist?(PortfolioStore.path) ? File.read(PortfolioStore.path) : nil
+    trades_before = File.exist?(TradesStore.path) ? File.read(TradesStore.path) : nil
+    begin
+      breakdown = PortfolioStore.close_shares_fifo(symbol: sym, shares: shares, price: price, sold_at: sold_at)
+      flags     = safe_fetch { WashSale.check(breakdown) } || []
+      breakdown.merge(wash_sale_flags: flags, preview: true).to_json
+    rescue ArgumentError => e
+      halt 400, { error: e.message }.to_json
+    ensure
+      # Restore stores so the preview is non-destructive.
+      File.write(PortfolioStore.path, state_before) if state_before
+      File.delete(PortfolioStore.path) if !state_before && File.exist?(PortfolioStore.path)
+      File.write(TradesStore.path, trades_before)   if trades_before
+      File.delete(TradesStore.path) if !trades_before && File.exist?(TradesStore.path)
     end
   end
 
@@ -550,7 +603,8 @@ class TMoneyTerminal < Sinatra::Base
           price:   params['price'],
           sold_at: params['sold_at']
         )
-        TradesStore.record_sell(breakdown, notes: params['notes'])
+        flags = safe_fetch { WashSale.check(breakdown) } || []
+        TradesStore.record_sell(breakdown, notes: params['notes'], wash_sale_flags: flags)
       rescue ArgumentError
         # silent
       end
@@ -576,8 +630,10 @@ class TMoneyTerminal < Sinatra::Base
     @symbol = params['symbol'].to_s.upcase
     @symbol = nil if @symbol.empty? || !SymbolIndex.known?(@symbol)
     @trades = @symbol ? TradesStore.for_symbol(@symbol) : TradesStore.read
-    @realized_ytd   = TradesStore.realized_pl_ytd
-    @realized_total = TradesStore.realized_pl_total
+    @realized_ytd        = TradesStore.realized_pl_ytd
+    @realized_total      = TradesStore.realized_pl_total
+    @realized_short_ytd  = TradesStore.realized_pl_short_term_ytd
+    @realized_long_ytd   = TradesStore.realized_pl_long_term_ytd
     erb :trades
   end
 

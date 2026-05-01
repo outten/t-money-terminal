@@ -2,6 +2,7 @@ require 'json'
 require 'fileutils'
 require 'date'
 require 'securerandom'
+require_relative 'tax_lot'
 
 # PortfolioStore — multi-lot, file-backed portfolio at `data/portfolio.json`.
 #
@@ -148,14 +149,25 @@ module PortfolioStore
           # Fully close this lot.
           shares_closed = lot[:shares]
           pl = ((px - lot[:cost_basis]) * shares_closed).round(2)
+          tax = TaxLot.classify(lot: lot, sold_at: sold_iso)
           list[idx] = lot.merge(closed_at: now_iso, closed_price: px.round(4), closed_sold_at: sold_iso, realized_pl: pl)
-          lots_closed << { lot_id: lot[:id], shares: shares_closed, cost_basis: lot[:cost_basis], realized_pl: pl }
+          lots_closed << {
+            lot_id:                lot[:id],
+            shares:                shares_closed,
+            cost_basis:            lot[:cost_basis],
+            realized_pl:           pl,
+            holding_period:        tax[:holding_period],
+            days_held:             tax[:days_held],
+            acquired_at_effective: tax[:acquired_at_effective],
+            acquired_at_source:    tax[:source]
+          }
           remaining -= shares_closed
         else
           # Partial close: split into a closed sub-lot + remaining open lot.
           shares_closed = remaining
           remaining_shares = (lot[:shares] - shares_closed).round(6)
           pl = ((px - lot[:cost_basis]) * shares_closed).round(2)
+          tax = TaxLot.classify(lot: lot.merge(shares: shares_closed), sold_at: sold_iso)
 
           closed_sub = lot.merge(
             id:             SecureRandom.hex(6),
@@ -169,7 +181,16 @@ module PortfolioStore
           remaining_open = lot.merge(shares: remaining_shares)
           list[idx] = remaining_open
           list << closed_sub
-          lots_closed << { lot_id: closed_sub[:id], shares: shares_closed, cost_basis: lot[:cost_basis], realized_pl: pl }
+          lots_closed << {
+            lot_id:                closed_sub[:id],
+            shares:                shares_closed,
+            cost_basis:            lot[:cost_basis],
+            realized_pl:           pl,
+            holding_period:        tax[:holding_period],
+            days_held:             tax[:days_held],
+            acquired_at_effective: tax[:acquired_at_effective],
+            acquired_at_source:    tax[:source]
+          }
           remaining = 0
         end
       end
@@ -177,12 +198,16 @@ module PortfolioStore
       write_unlocked(list)
 
       total_pl = lots_closed.sum { |l| l[:realized_pl] }.round(2)
+      tax_split = TaxLot.aggregate_realized(lots_closed)
       {
         symbol:        sym,
         shares_closed: requested.round(6),
         price:         px.round(4),
         sold_at:       sold_iso,
         realized_pl:   total_pl,
+        short_term_pl: tax_split[:short_term_pl],
+        long_term_pl:  tax_split[:long_term_pl],
+        unknown_pl:    tax_split[:unknown_pl],
         lots_closed:   lots_closed
       }
     end
