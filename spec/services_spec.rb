@@ -91,6 +91,74 @@ RSpec.describe MarketDataService do
     end
   end
 
+  describe '.change_pct_from_tiingo_bars (private)' do
+    it 'returns 0 for empty input' do
+      expect(MarketDataService.send(:change_pct_from_tiingo_bars, [])).to eq(0)
+      expect(MarketDataService.send(:change_pct_from_tiingo_bars, nil)).to eq(0)
+    end
+
+    # Regression: the old fetch_from_tiingo_quote requested only the latest
+    # EOD bar from Tiingo, so this single-element case fell back to
+    # `prev_close = close` and silently emitted 0% — that's why every
+    # Tiingo-sourced quote on /dashboard's watchlist showed 0.0%.
+    it 'returns 0 when only a single bar is present (regression for watchlist 0% bug)' do
+      bars = [{ 'close' => 100.0 }]
+      expect(MarketDataService.send(:change_pct_from_tiingo_bars, bars)).to eq(0)
+    end
+
+    it 'computes the day-over-day percent from the last two bars' do
+      bars = [{ 'close' => 27.06 }, { 'close' => 27.19 }]
+      pct  = MarketDataService.send(:change_pct_from_tiingo_bars, bars)
+      expect(pct).to be_within(1e-3).of(0.4804) # ≈ +0.48%
+    end
+
+    it 'falls back to adjClose when close is missing' do
+      bars = [{ 'adjClose' => 100.0 }, { 'adjClose' => 105.0 }]
+      pct  = MarketDataService.send(:change_pct_from_tiingo_bars, bars)
+      expect(pct).to be_within(1e-3).of(5.0)
+    end
+
+    it 'returns 0 when prev close is zero (avoid divide-by-zero)' do
+      bars = [{ 'close' => 0.0 }, { 'close' => 5.0 }]
+      expect(MarketDataService.send(:change_pct_from_tiingo_bars, bars)).to eq(0)
+    end
+  end
+
+  describe '.fetch_from_tiingo_quote (private)' do
+    it 'requests the last 7 days of bars so prev_close can be computed' do
+      ENV['TIINGO_API_KEY'] = 'test_key'
+      MarketDataService.instance_variable_set(:@tiingo_quote_rate_limited_until, nil)
+
+      fake_body = [
+        { 'close' => 26.99, 'high' => 27.10, 'low' => 26.85, 'open' => 27.00, 'volume' => 100_000 },
+        { 'close' => 27.06, 'high' => 27.20, 'low' => 26.90, 'open' => 27.05, 'volume' => 110_000 },
+        { 'close' => 27.19, 'high' => 27.48, 'low' => 26.99, 'open' => 27.29, 'volume' => 120_000 }
+      ].to_json
+      fake_res = instance_double(Net::HTTPSuccess, body: fake_body)
+      allow(fake_res).to receive(:is_a?).and_return(false)
+      allow(fake_res).to receive(:is_a?).with(Net::HTTPTooManyRequests).and_return(false)
+      allow(fake_res).to receive(:is_a?).with(Net::HTTPSuccess).and_return(true)
+
+      captured_url = nil
+      allow(Net::HTTP).to receive(:start) do |host, port, **opts, &blk|
+        # Capture URL by inspecting the Net::HTTP::Get instance the block builds
+        fake_res
+      end
+      # Net::HTTP::Get::new actually receives the URI — intercept that instead.
+      allow(Net::HTTP::Get).to receive(:new).and_wrap_original do |original, uri|
+        captured_url = uri
+        original.call(uri)
+      end
+
+      result = MarketDataService.send(:fetch_from_tiingo_quote, 'CMCSA')
+      expect(captured_url.to_s).to include('startDate=')
+      expect(result['10. change percent']).to match(/0\.4\d+%/)
+      expect(result['05. price']).to eq('27.19')
+    ensure
+      ENV.delete('TIINGO_API_KEY')
+    end
+  end
+
   describe '.fetch_from_yahoo (private)' do
     it 'returns a normalized hash with expected keys when Yahoo responds successfully' do
       fake_meta = {

@@ -155,7 +155,7 @@ See [CREDENTIALS.md](CREDENTIALS.md) for signup walkthroughs and the FMP free-ti
 ### Common tasks
 
 ```bash
-make test                        # RSpec suite (currently 547 examples)
+make test                        # RSpec suite (currently 553 examples)
 make refresh-cache               # Warm market-data cache for the universe
 make refresh-providers           # Warm FMP / FRED / News / Stooq caches
 make refresh-all                 # Both, in one shot — REGIONS ∪ portfolio ∪ watchlist
@@ -201,7 +201,7 @@ app/
 views/                        # ERB templates with shared layout
 public/                       # style.css, app.js (chart), features.js (search/watchlist/alerts/portfolio)
 scripts/                      # refresh_cache, refresh_providers, scheduler, check_alerts, cache_status
-spec/                         # RSpec — 547 examples across 20 spec files
+spec/                         # RSpec — 553 examples across 20 spec files
 data/cache/                   # Hierarchical disk cache
 data/imports/                 # Broker import snapshots (audit + drift)
 data/porfolio/fidelity/       # Drop your Fidelity Portfolio_Positions_*.csv here

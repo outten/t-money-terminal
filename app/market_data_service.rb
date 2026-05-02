@@ -628,7 +628,14 @@ class MarketDataService
       api_key = ENV['TIINGO_API_KEY']
       return nil unless api_key
 
-      url = URI("https://api.tiingo.com/tiingo/daily/#{symbol}/prices?token=#{api_key}")
+      # Request the last ~7 calendar days of EOD bars so we have at least 2
+      # trading sessions to compute the day-over-day change_pct. Without
+      # `startDate`, Tiingo returns ONLY the most recent EOD bar — that
+      # caused a long-standing bug where every Tiingo-sourced quote on
+      # /dashboard's watchlist showed 0.00% (data[-2] was nil so prev_close
+      # collapsed to close). 7 days clears 3-day weekends + market holidays.
+      start_date = (Date.today - 7).iso8601
+      url = URI("https://api.tiingo.com/tiingo/daily/#{symbol}/prices?startDate=#{start_date}&token=#{api_key}")
       req = Net::HTTP::Get.new(url)
       req['Content-Type'] = 'application/json'
       res = Net::HTTP.start(url.host, url.port, use_ssl: true, read_timeout: 10, open_timeout: 5) { |http| http.request(req) }
@@ -652,8 +659,7 @@ class MarketDataService
       volume  = row['volume'] || row['adjVolume'] || 0
       return nil unless close && close != 0
 
-      prev_close = data.length > 1 ? (data[-2]['close'] || data[-2]['adjClose']).to_f : close.to_f
-      change_pct = prev_close.zero? ? 0 : ((close.to_f - prev_close) / prev_close * 100).round(4)
+      change_pct = change_pct_from_tiingo_bars(data)
 
       {
         '05. price'          => close.to_s,
@@ -666,6 +672,18 @@ class MarketDataService
     rescue StandardError => e
       warn "[MarketDataService] Tiingo quote fetch failed for #{symbol}: #{e.message}" unless test_env?
       nil
+    end
+
+    # Extracted so the prev-close logic can be tested without HTTP. Returns
+    # 0 when the array doesn't carry at least two usable bars OR when the
+    # prior close is zero — both edge cases that previously masked the
+    # underlying "only one bar" data shape.
+    def change_pct_from_tiingo_bars(bars)
+      return 0 unless bars.is_a?(Array) && bars.length >= 2
+      current  = (bars.last['close']  || bars.last['adjClose']).to_f
+      previous = (bars[-2]['close']   || bars[-2]['adjClose']).to_f
+      return 0 if previous.zero?
+      ((current - previous) / previous * 100).round(4)
     end
 
     def fetch_from_alpha_vantage(symbol)

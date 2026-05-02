@@ -72,6 +72,15 @@
 - `/portfolio` summary cards split realized YTD by short vs long. `/trades` page shows holding-period badges + wash-sale warnings inline.
 - 22 new tests in [spec/tax_lot_spec.rb](spec/tax_lot_spec.rb).
 
+### [PR #18] — Fix watchlist 0.0% bug (Tiingo single-bar daily endpoint)
+
+- **Bug**: every quote on `/dashboard`'s My Watchlist showed `0.0%` change. Root cause: `MarketDataService.fetch_from_tiingo_quote` requested `https://api.tiingo.com/tiingo/daily/<symbol>/prices` without `startDate`, which returns ONLY the latest EOD bar — so `data.length > 1` was false, `prev_close` collapsed to `close`, and `change_pct` always computed as 0. Tiingo is first in the provider waterfall, so every cache-hit symbol was affected.
+- **Fix**: pass `startDate=<7 days ago>` so Tiingo returns ~5 trading sessions of bars (covers any 3-day weekend / market holiday). Extracted the prev-close math into `change_pct_from_tiingo_bars` so the regression is testable without HTTP.
+- 6 new tests in [spec/services_spec.rb](spec/services_spec.rb): empty/nil bars, single-bar regression case, two-bar happy path, adjClose fallback, divide-by-zero guard, and an integration test asserting `startDate=` appears in the URL.
+- Live verified: bust-cache via `/admin/refresh/symbol`, then `/dashboard` shows CMCSA at +0.55%, CAT at -0.05% — real values instead of 0.0%.
+
+**Tests:** 553 examples, 0 failures across 20 spec files.
+
 ### [PR #17] — Retirement planning sub-page at /portfolio/retirement
 
 - New view [views/retirement.erb](views/retirement.erb) and route `GET /portfolio/retirement` rendering the full retirement projection (progress + spending sustainability + verdict + caveats + citations) on its own page.
@@ -80,7 +89,7 @@
 - Pages-table updated in README.md and Instructions.md; new "Retirement planning sub-page" section added to Instructions.md.
 - 4 new route tests in [spec/retirement_projection_spec.rb](spec/retirement_projection_spec.rb) (empty-profile state, configured projection, spending sub-section render, /portfolio link).
 
-**Tests:** 547 examples, 0 failures across 20 spec files.
+**Tests:** 547 examples, 0 failures across 20 spec files. (Superseded by PR #18 — see above.)
 
 ### [PR #16] — Retirement spending sustainability ("is it sustainable, and for how long?")
 
