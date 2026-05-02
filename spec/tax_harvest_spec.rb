@@ -130,6 +130,21 @@ RSpec.describe 'ProfileStore + TaxHarvester + tax-harvest routes' do
       ProfileStore.update(niit_applies: 'false')
       expect(ProfileStore.read[:niit_applies]).to eq(false)
     end
+
+    it 'persists retirement_target_value as a float' do
+      ProfileStore.update(retirement_target_value: '2500000')
+      expect(ProfileStore.read[:retirement_target_value]).to eq(2_500_000.0)
+    end
+
+    it 'rejects negative retirement_target_value' do
+      expect { ProfileStore.update(retirement_target_value: '-1') }.to raise_error(ArgumentError)
+    end
+
+    it 'leaves retirement_target_value alone when blank' do
+      ProfileStore.update(retirement_target_value: '1000000')
+      ProfileStore.update(retirement_target_value: '')
+      expect(ProfileStore.read[:retirement_target_value]).to eq(1_000_000.0)
+    end
   end
 
   # ===========================================================================
@@ -243,6 +258,47 @@ RSpec.describe 'ProfileStore + TaxHarvester + tax-harvest routes' do
         prof = profile.merge(risk_tolerance: 'conservative')
         cands = TaxHarvester.candidates(positions: positions, profile: prof, trades: [])
         expect(cands.first[:recommendation][:action]).to eq('skip')
+      end
+
+      it 'omits :underwater when no per_symbol_history is provided' do
+        positions = [position(
+          symbol: 'XYZ',
+          lots: [lot(id: 'lt', shares: 10, cost_basis: 100, acquired_at: two_years_ago)],
+          current_price: 70.0
+        )]
+        cands = TaxHarvester.candidates(positions: positions, profile: profile, trades: [])
+        expect(cands.first[:underwater]).to be_nil
+      end
+
+      it 'attaches underwater streak when per_symbol_history is supplied' do
+        positions = [position(
+          symbol: 'XYZ',
+          lots: [lot(id: 'lt', shares: 10, cost_basis: 100, acquired_at: two_years_ago)],
+          current_price: 70.0
+        )]
+        per_symbol_history = {
+          'XYZ' => [
+            { date: (today - 10).iso8601, market_value: 950.0, cost_value: 1000.0 },
+            { date: (today - 5).iso8601,  market_value: 920.0, cost_value: 1000.0 },
+            { date: (today - 1).iso8601,  market_value: 700.0, cost_value: 1000.0 }
+          ]
+        }
+        cands = TaxHarvester.candidates(positions: positions, profile: profile, trades: [],
+                                        per_symbol_history: per_symbol_history)
+        expect(cands.first[:underwater]).not_to be_nil
+        expect(cands.first[:underwater][:snapshots]).to eq(3)
+        expect(cands.first[:underwater][:currently_underwater]).to eq(true)
+      end
+
+      it 'sets :underwater to nil if symbol is not in per_symbol_history' do
+        positions = [position(
+          symbol: 'XYZ',
+          lots: [lot(id: 'lt', shares: 10, cost_basis: 100, acquired_at: two_years_ago)],
+          current_price: 70.0
+        )]
+        cands = TaxHarvester.candidates(positions: positions, profile: profile, trades: [],
+                                        per_symbol_history: {})
+        expect(cands.first[:underwater]).to be_nil
       end
 
       it 'attaches replacement suggestions for known symbols' do

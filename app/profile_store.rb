@@ -28,13 +28,16 @@ module ProfileStore
   RISK_TOLERANCES = %w[aggressive moderate conservative].freeze
 
   DEFAULTS = {
-    current_age:           nil,
-    retirement_age:        65,
-    risk_tolerance:        'moderate',
-    federal_ltcg_rate:     0.15,
-    federal_ordinary_rate: 0.22,
-    state_tax_rate:        nil,
-    niit_applies:          false
+    current_age:             nil,
+    retirement_age:          65,
+    risk_tolerance:          'moderate',
+    federal_ltcg_rate:       0.15,
+    federal_ordinary_rate:   0.22,
+    state_tax_rate:          nil,
+    niit_applies:            false,
+    retirement_target_value: nil  # Optional $ goal at retirement_age. Drives the
+                                  # /portfolio retirement-progress card + required-
+                                  # annual-return calc. nil = section hidden.
   }.freeze
 
   module_function
@@ -105,6 +108,11 @@ module ProfileStore
         out[key] = f
       when :niit_applies
         out[key] = !!(v == true || v == 'true' || v == '1' || v == 1)
+      when :retirement_target_value
+        next if v.nil? || v.to_s.strip.empty?
+        f = Float(v) rescue nil
+        raise ArgumentError, 'retirement_target_value must be a non-negative number' if f.nil? || f < 0
+        out[key] = f.round(2)
       end
     end
 

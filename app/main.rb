@@ -20,6 +20,7 @@ require_relative 'tax_harvester'
 require_relative 'fidelity_importer'
 require_relative 'import_snapshot_store'
 require_relative 'portfolio_history'
+require_relative 'retirement_projection'
 require_relative 'portfolio_diff'
 require_relative 'refresh_universe'
 require_relative 'refresh_tracker'
@@ -409,6 +410,17 @@ class TMoneyTerminal < Sinatra::Base
     @backfill_errors  = params['backfill_errors']&.to_i
     @history_series   = PortfolioHistory.time_series(source: 'fidelity')
     @history_per_sym  = PortfolioHistory.per_symbol_series(source: 'fidelity')
+    # Retirement projection — uses live @totals if PortfolioStore has positions,
+    # else falls back to the latest snapshot's total_value so users running
+    # snapshot-only (no PortfolioStore lots) still see the section.
+    current_value = @totals[:market_value].to_f
+    if current_value <= 0 && @history_series.last
+      current_value = @history_series.last[:total_value].to_f
+    end
+    @retirement = RetirementProjection.project(
+      profile:       ProfileStore.read,
+      current_value: current_value
+    )
     erb :portfolio
   end
 
@@ -556,9 +568,10 @@ class TMoneyTerminal < Sinatra::Base
     @profile  = ProfileStore.read
     @rows     = PortfolioStore.positions.map { |p| valuate_position(p) }
     @analysis = TaxHarvester.analyse(
-      positions: @rows,
-      profile:   @profile,
-      trades:    TradesStore.read
+      positions:          @rows,
+      profile:            @profile,
+      trades:             TradesStore.read,
+      per_symbol_history: PortfolioHistory.per_symbol_series(source: 'fidelity')
     )
     @profile_configured = ProfileStore.configured?
     @years_to_retirement = ProfileStore.years_to_retirement
@@ -569,7 +582,12 @@ class TMoneyTerminal < Sinatra::Base
     content_type :json
     profile = ProfileStore.read
     rows    = PortfolioStore.positions.map { |p| valuate_position(p) }
-    TaxHarvester.analyse(positions: rows, profile: profile, trades: TradesStore.read).to_json
+    TaxHarvester.analyse(
+      positions:          rows,
+      profile:            profile,
+      trades:             TradesStore.read,
+      per_symbol_history: PortfolioHistory.per_symbol_series(source: 'fidelity')
+    ).to_json
   end
 
   # Update the user profile (current_age / retirement_age / risk_tolerance
@@ -578,13 +596,14 @@ class TMoneyTerminal < Sinatra::Base
   post '/profile' do
     begin
       ProfileStore.update(
-        current_age:           params['current_age'],
-        retirement_age:        params['retirement_age'],
-        risk_tolerance:        params['risk_tolerance'],
-        federal_ltcg_rate:     params['federal_ltcg_rate'],
-        federal_ordinary_rate: params['federal_ordinary_rate'],
-        state_tax_rate:        params['state_tax_rate'],
-        niit_applies:          params['niit_applies']
+        current_age:             params['current_age'],
+        retirement_age:          params['retirement_age'],
+        risk_tolerance:          params['risk_tolerance'],
+        federal_ltcg_rate:       params['federal_ltcg_rate'],
+        federal_ordinary_rate:   params['federal_ordinary_rate'],
+        state_tax_rate:          params['state_tax_rate'],
+        niit_applies:            params['niit_applies'],
+        retirement_target_value: params['retirement_target_value']
       )
       redirect (params['return_to'] || '/portfolio/tax-harvest'), 302
     rescue ArgumentError => e

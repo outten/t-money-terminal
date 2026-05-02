@@ -140,6 +140,48 @@ RSpec.describe 'PortfolioHistory + backfill + /portfolio history' do
       end
     end
 
+    describe '.underwater_streak' do
+      it 'returns nil for a symbol with no history' do
+        expect(PortfolioHistory.underwater_streak('NOPE')).to be_nil
+      end
+
+      it 'returns nil when the latest snapshot is in the green' do
+        write_snapshot('2026-04-28', [{ 'symbol' => 'A', 'shares' => 10, 'cost_basis' => 100, 'last_price' => 90, 'current_value' => 900, 'cost_value' => 1000 }])
+        write_snapshot('2026-04-29', [{ 'symbol' => 'A', 'shares' => 10, 'cost_basis' => 100, 'last_price' => 110, 'current_value' => 1100, 'cost_value' => 1000 }])
+        expect(PortfolioHistory.underwater_streak('A')).to be_nil
+      end
+
+      it 'counts consecutive red snapshots ending at the latest' do
+        write_snapshot('2026-04-26', [{ 'symbol' => 'A', 'shares' => 10, 'cost_basis' => 100, 'last_price' => 110, 'current_value' => 1100, 'cost_value' => 1000 }])
+        write_snapshot('2026-04-27', [{ 'symbol' => 'A', 'shares' => 10, 'cost_basis' => 100, 'last_price' => 95,  'current_value' => 950,  'cost_value' => 1000 }])
+        write_snapshot('2026-04-28', [{ 'symbol' => 'A', 'shares' => 10, 'cost_basis' => 100, 'last_price' => 92,  'current_value' => 920,  'cost_value' => 1000 }])
+        write_snapshot('2026-04-29', [{ 'symbol' => 'A', 'shares' => 10, 'cost_basis' => 100, 'last_price' => 88,  'current_value' => 880,  'cost_value' => 1000 }])
+        out = PortfolioHistory.underwater_streak('A')
+        expect(out[:snapshots]).to eq(3)
+        expect(out[:since]).to eq('2026-04-27')
+        expect(out[:currently_underwater]).to eq(true)
+      end
+
+      it 'breaks the streak on the first non-red snapshot working backwards' do
+        write_snapshot('2026-04-25', [{ 'symbol' => 'A', 'shares' => 10, 'cost_basis' => 100, 'last_price' => 80, 'current_value' => 800, 'cost_value' => 1000 }])
+        write_snapshot('2026-04-26', [{ 'symbol' => 'A', 'shares' => 10, 'cost_basis' => 100, 'last_price' => 105, 'current_value' => 1050, 'cost_value' => 1000 }])
+        write_snapshot('2026-04-27', [{ 'symbol' => 'A', 'shares' => 10, 'cost_basis' => 100, 'last_price' => 95, 'current_value' => 950, 'cost_value' => 1000 }])
+        out = PortfolioHistory.underwater_streak('A')
+        expect(out[:snapshots]).to eq(1)
+        expect(out[:since]).to eq('2026-04-27')
+      end
+
+      it 'accepts a pre-loaded series array' do
+        series = [
+          { date: '2026-04-26', market_value: 950.0, cost_value: 1000.0 },
+          { date: '2026-04-27', market_value: 940.0, cost_value: 1000.0 }
+        ]
+        out = PortfolioHistory.underwater_streak(series)
+        expect(out[:snapshots]).to eq(2)
+        expect(out[:since]).to eq('2026-04-26')
+      end
+    end
+
     describe '.sparkline_svg' do
       it 'returns an em-dash for fewer than 2 points' do
         expect(PortfolioHistory.sparkline_svg([])).to include('—')

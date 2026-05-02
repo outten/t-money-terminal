@@ -109,7 +109,14 @@ The backfill button scans both `data/porfolio/fidelity/` (the canonical CSV inpu
 **Other sections:**
 - **YTD realised** — short / long / net, plus how much of the $3 000 ordinary-offset cap is already used and the carryforward estimate.
 - **Crossing ST → LT in ≤ 30 days** — flagged so you don't realise a near-LT loss without thinking; for unrealised gains in the same window, waiting saves tax.
+- **Underwater streak (per candidate)** — how many consecutive snapshots the position has been red, plus calendar days since the streak began. Conviction signal: a position red for 3 days is noise; red for 60+ days is conviction. Drives a low / med / high badge alongside each candidate.
 - **Replacement suggestions** — different-INDEX ETFs (SPY → VTI, QQQ → VUG, etc.). Same-INDEX trios (SPY ↔ VOO ↔ IVV) are intentionally NOT recommended.
+
+### Retirement progress on /portfolio
+
+Once you've also set a **retirement target value** in the profile form, `/portfolio` shows a **Retirement progress** section with four cards: years remaining, current portfolio value, target at retirement (with the gap below), and the **required compound annual return** to hit the target. The section is hidden until current age + retirement age + target are all set.
+
+Below the cards, a **caveated verdict** reads "On track" / "Tight" / "Not on track" by comparing your required CAGR against long-run historical norms cited from two sources (NYU Stern's Damodaran 1928–2023 dataset and the Bogleheads historical-returns wiki — both linked, opens in a new tab). Thresholds: ≤ 5% sits below the 10-yr Treasury average; 5–8% matches a 60/40 balanced mix; 8–10% needs equity-heavy positioning; &gt; 10% exceeds the S&P 500's long-run average. The verdict is directional, not a forecast — sequence of returns, fees, taxes, contributions, asset mix, and inflation are all unmodelled.
 
 This is **decision support, not tax advice**. The page does not file your return, account for AMT, prior-year carryforwards, or QDI interactions.
 

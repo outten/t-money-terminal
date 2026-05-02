@@ -95,6 +95,9 @@
           <option value="true" <%= @profile[:niit_applies] ? 'selected' : '' %>>Yes (3.8% on net investment income, high earners)</option>
         </select>
       </label>
+      <label>Retirement target value ($, optional)
+        <input type="number" step="1000" min="0" name="retirement_target_value" value="<%= @profile[:retirement_target_value] %>" placeholder="2500000">
+      </label>
       <button type="submit" class="btn-primary">Save profile</button>
     </form>
     <p class="data-source">
@@ -231,6 +234,7 @@
           <th class="num">Unrealised loss</th>
           <th class="num">Loss %</th>
           <th>Holding</th>
+          <th>Underwater</th>
           <th class="num">Est. tax saved</th>
           <th>Recommendation</th>
           <th>Replacements</th>
@@ -252,6 +256,21 @@
                   <%= c[:days_held] %>d
                   <% if c[:acquired_at_source] == 'snapshot' %>(inferred)<% end %>
                 </div>
+              <% end %>
+            </td>
+            <td>
+              <% if c[:underwater] && c[:underwater][:snapshots] %>
+                <% u = c[:underwater] %>
+                <% conviction = u[:snapshots] >= 10 ? 'high' : (u[:snapshots] >= 3 ? 'med' : 'low') %>
+                <span class="signal-badge holding-<%= conviction == 'high' ? 'long' : (conviction == 'med' ? 'short' : 'unknown') %>"
+                      title="Continuously red since <%= u[:since] %>">
+                  <%= u[:snapshots] %> snapshot<%= u[:snapshots] == 1 ? '' : 's' %>
+                </span>
+                <div class="muted" style="font-size: 0.78rem">
+                  <%= u[:days] %>d since <%= u[:since] %>
+                </div>
+              <% else %>
+                <span class="muted">—</span>
               <% end %>
             </td>
             <td class="num mono <%= c[:estimated_tax_savings] > 0 ? 'positive' : '' %>">

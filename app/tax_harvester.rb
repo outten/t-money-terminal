@@ -1,6 +1,7 @@
 require 'date'
 require_relative 'tax_lot'
 require_relative 'wash_sale'
+require_relative 'portfolio_history'
 
 # TaxHarvester — identify loss-harvesting candidates, estimate tax savings,
 # detect short-to-long threshold crossings, and recommend an action per
@@ -77,8 +78,16 @@ module TaxHarvester
   module_function
 
   # The main entry-point. Returns the full analysis bundle.
-  def analyse(positions:, profile:, trades:)
-    cands = candidates(positions: positions, profile: profile, trades: trades)
+  #
+  # `per_symbol_history` (optional) is the hash from
+  # `PortfolioHistory.per_symbol_series` — when provided, each candidate
+  # row gains an `:underwater` field with snapshot-streak data
+  # (how long the position has been continuously red). Cheap context for
+  # the harvest-vs-wait call: a position red for 3 days is noise, red
+  # for 60 is conviction.
+  def analyse(positions:, profile:, trades:, per_symbol_history: nil)
+    cands = candidates(positions: positions, profile: profile, trades: trades,
+                       per_symbol_history: per_symbol_history)
     cross = crossing_threshold(positions: positions)
     ytd_  = ytd_summary(trades: trades)
 
@@ -100,7 +109,7 @@ module TaxHarvester
   # All open lots currently underwater, ranked by estimated tax savings.
   # Each candidate row carries everything the view needs to render a row
   # without recomputing.
-  def candidates(positions:, profile:, trades:)
+  def candidates(positions:, profile:, trades:, per_symbol_history: nil)
     today_iso = Date.today.iso8601
     threshold_pct = HARVEST_THRESHOLDS[profile[:risk_tolerance]] || HARVEST_THRESHOLDS['moderate']
     rows = []
@@ -132,6 +141,8 @@ module TaxHarvester
           realized_pl:   pl
         })
 
+        underwater = per_symbol_history ? underwater_from_history(per_symbol_history, pos[:symbol]) : nil
+
         rows << {
           symbol:                  pos[:symbol],
           lot_id:                  lot[:id],
@@ -150,6 +161,7 @@ module TaxHarvester
           marginal_rate_applied:   marginal_rate(holding_period: tax[:holding_period], profile: profile),
           wash_sale_flags:         wash,
           replacement_suggestions: REPLACEMENT_SUGGESTIONS[pos[:symbol]] || [],
+          underwater:              underwater,
           recommendation:          recommend(loss_pct: loss_pct, holding_period: tax[:holding_period],
                                              days_held: tax[:days_held], wash_flags: wash,
                                              profile: profile, threshold_pct: threshold_pct)
@@ -287,5 +299,15 @@ module TaxHarvester
     Date.parse(raw.to_s)
   rescue StandardError
     nil
+  end
+
+  # Underwater streak for `symbol` derived from a per-symbol history hash.
+  # Returns the streak hash from PortfolioHistory.underwater_streak or nil
+  # if the symbol either has no history or isn't currently in the red.
+  def underwater_from_history(per_symbol_history, symbol)
+    series = per_symbol_history[symbol] || per_symbol_history[symbol.to_s.upcase] || []
+    return nil if series.empty?
+    return nil unless defined?(PortfolioHistory)
+    PortfolioHistory.underwater_streak(series)
   end
 end

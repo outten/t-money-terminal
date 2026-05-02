@@ -127,6 +127,84 @@
   </section>
 <% end %>
 
+<% if @retirement %>
+  <section class="benchmark-section" style="margin-top: 18px">
+    <h3>
+      Retirement progress
+      <span class="muted" style="font-size:0.78rem; font-weight:normal">
+        &middot; <a href="/portfolio/tax-harvest">edit profile →</a>
+      </span>
+    </h3>
+    <div class="portfolio-summary">
+      <div class="summary-card">
+        <div class="summary-label">Years remaining</div>
+        <div class="summary-value mono"><%= @retirement[:years_remaining] %></div>
+        <div class="summary-sub muted">until retirement age</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Current value</div>
+        <div class="summary-value mono"><%= format_money(@retirement[:current_value]) %></div>
+        <div class="summary-sub muted">live or latest snapshot</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Target at retirement</div>
+        <div class="summary-value mono"><%= format_money(@retirement[:target_value]) %></div>
+        <div class="summary-sub muted">
+          <% if @retirement[:gap] > 0 %>
+            gap <%= format_money(@retirement[:gap]) %>
+          <% else %>
+            already at goal
+          <% end %>
+        </div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Required annual return</div>
+        <% if @retirement[:status] == 'at_goal' %>
+          <div class="summary-value mono positive">0.0%</div>
+          <div class="summary-sub muted">already at target</div>
+        <% elsif @retirement[:required_annual_return] %>
+          <% rr = @retirement[:required_annual_return] %>
+          <% rr_class = rr <= 0.05 ? 'positive' : (rr <= 0.10 ? '' : 'negative') %>
+          <div class="summary-value mono <%= rr_class %>"><%= format_percent(rr, digits: 2) %></div>
+          <div class="summary-sub muted">CAGR for <%= @retirement[:years_remaining] %>y</div>
+        <% else %>
+          <div class="summary-value mono">—</div>
+          <div class="summary-sub muted">missing inputs</div>
+        <% end %>
+      </div>
+    </div>
+    <% if @retirement[:verdict_summary] %>
+      <%
+        verdict_class =
+          case @retirement[:verdict]
+          when :on_track_safe, :on_track_balanced, :at_goal then 'positive'
+          when :tight_equity                                then ''
+          else                                                   'negative'
+          end
+      %>
+      <p style="margin-top: 12px; padding: 10px 14px; border-left: 3px solid <%=
+                verdict_class == 'positive' ? '#0a8a3a' : (verdict_class == 'negative' ? '#b00020' : '#c08400') %>;
+                background: rgba(0,0,0,0.02); font-size: 0.92rem">
+        <strong class="<%= verdict_class %>"><%= @retirement[:verdict_summary] %></strong>
+      </p>
+      <p class="data-source">
+        <strong>Caveat.</strong> Verdict is a directional read against long-run historical CAGRs, not a forecast.
+        Real outcomes depend on sequence of returns, fees, taxes, contributions, and the actual asset mix you hold.
+        Inflation isn't modelled — these are nominal returns.
+        Reference benchmarks
+        <% @retirement[:benchmarks].each_with_index do |b, i| %>
+          <%= '· ' if i > 0 %><%= b[:label] %>: <strong><%= (b[:return] * 100).round(1) %>%</strong>
+        <% end %>.
+        Sources:
+        <% @retirement[:citations].each_with_index do |c, i| %>
+          <%= '· ' if i > 0 %><a href="<%= c[:url] %>" target="_blank" rel="noopener noreferrer"><%= c[:label] %></a>
+        <% end %>.
+        Adjust the target on the <a href="/portfolio/tax-harvest">tax-harvest profile form</a>.
+      </p>
+    <% end %>
+  </section>
+<% end %>
+
 <% if @rows.empty? %>
   <div class="notice">No open positions. Buy your first lot below.</div>
 <% else %>
