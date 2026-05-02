@@ -33,7 +33,7 @@ See [CREDENTIALS.md](CREDENTIALS.md) for the full walkthrough including FMP free
 make install                 # bundle install
 make run                     # auto-reload via rerun → http://localhost:4567 (alias: make dev)
 make serve                   # one-shot run, no auto-reload
-make test                    # RSpec — currently 453 examples
+make test                    # RSpec — currently 489 examples
 make refresh-cache           # warm market-data cache for the universe
 make refresh-providers       # warm FMP / FRED / News / Stooq
 make refresh-all             # both — REGIONS ∪ portfolio ∪ watchlist
@@ -155,8 +155,9 @@ app/
   wash_sale.rb             # IRS wash-sale risk flagging on loss-sells (±30d)
   profile_store.rb         # User profile (age, retirement, risk tolerance, tax rates, NIIT) at data/profile.json
   tax_harvester.rb         # Loss-harvest candidate ranking, tax-savings estimate, ST→LT crossings, replacement suggestions
-  portfolio_history.rb     # Pivots ImportSnapshotStore into total + per-symbol time series; sparklines; underwater_streak
+  portfolio_history.rb     # Pivots ImportSnapshotStore into total + per-symbol time series; sparklines; underwater_streak; movers; allocation_breakdown
   retirement_projection.rb # Required-CAGR math (current → target over years); /portfolio retirement-progress section
+  asset_class_mapper.rb    # Symbol+description → asset class (curated map + description heuristics for target-date / intl / bonds / etc.)
   analytics/benchmark.rb   # Lot-weighted portfolio return vs SPY (cache-only)
   fidelity_importer.rb     # Broker CSV → reconciliation
   import_snapshot_store.rb # Per-source snapshot persistence
@@ -169,7 +170,7 @@ app/
 views/                     # ERB templates
 public/                    # style.css + app.js (chart) + features.js (search/watchlist/alerts/portfolio)
 scripts/                   # refresh_cache, refresh_providers, scheduler, check_alerts, cache_status
-spec/                      # 17 spec files, 453 examples (tax_lot_spec.rb covers TaxLot/WashSale/Benchmark; tax_harvest_spec.rb covers ProfileStore+TaxHarvester+routes; portfolio_history_spec.rb covers PortfolioHistory + Fidelity backfill + history routes; retirement_projection_spec.rb covers required-CAGR math)
+spec/                      # 18 spec files, 489 examples (tax_lot_spec.rb covers TaxLot/WashSale/Benchmark; tax_harvest_spec.rb covers ProfileStore+TaxHarvester+routes; portfolio_history_spec.rb covers PortfolioHistory + Fidelity backfill + history routes; retirement_projection_spec.rb covers required-CAGR math; asset_class_mapper_spec.rb covers symbol+description classification)
 data/                      # All app state (git-ignored except hierarchical cache structure markers)
 .github/workflows/ci.yml   # GitHub Actions — RSpec + scripts syntax check on push to main + every PR
 ```
@@ -177,7 +178,7 @@ data/                      # All app state (git-ignored except hierarchical cach
 ## Testing
 
 ```bash
-make test                                  # full suite (453 examples, 0 failures)
+make test                                  # full suite (489 examples, 0 failures)
 bundle exec rspec spec/feature_spec.rb     # one file
 bundle exec rspec spec/feature_spec.rb:42  # one example
 ```

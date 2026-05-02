@@ -421,6 +421,8 @@ class TMoneyTerminal < Sinatra::Base
       profile:       ProfileStore.read,
       current_value: current_value
     )
+    @movers     = PortfolioHistory.movers(top_n: 5, source: 'fidelity')
+    @allocation = PortfolioHistory.allocation_breakdown(source: 'fidelity')
     erb :portfolio
   end
 

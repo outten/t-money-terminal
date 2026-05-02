@@ -72,6 +72,17 @@
 - `/portfolio` summary cards split realized YTD by short vs long. `/trades` page shows holding-period badges + wash-sale warnings inline.
 - 22 new tests in [spec/tax_lot_spec.rb](spec/tax_lot_spec.rb).
 
+### [PR #14] — Performance leaders/laggards + asset-class breakdown
+- **`PortfolioHistory.movers`** — top 5 gainers + top 5 laggards across the snapshot window, ranked by **per-share price change** (not market_value change — that would conflate price action with the user's own buy/sells). Skips positions where shares drifted >5% between first and last snapshot (catches stock splits like BKNG 25:1 / VOOG 6:1, large buys, broker data quirks). `min_value:` knob (default $1000) filters tiny positions whose % rankings are noise. Each row carries the full per-symbol series for inline-SVG sparklines.
+- **Performance leaders & laggards section** on `/portfolio` — two-column layout (gainers / laggards), with sparkline per row; hidden when there are fewer than 2 snapshots.
+- **`AssetClassMapper`** ([app/asset_class_mapper.rb](app/asset_class_mapper.rb)) — classifies a holding into one of nine classes (target-date / us_stocks / intl_stocks / bonds / real_estate / commodities / balanced / cash / unmapped) using a hand-curated symbol map plus description regex rules. Symbol map covers ~50 popular ETFs/MFs + the user's biggest unmapped holdings (FMAGX, FBGRX, FVDFX, FSMD; mega-cap individual stocks NVDA/AAPL/MSFT/GOOGL/AMZN/META/AVGO/JPM/AMAT/MU/GE/GEV/KLAC/XOM; ADRs TSM/SHEL). Description rules catch ADR markers (`SPON ADS`, `ADS EA REP`), abbreviations (`INTL`, `INTNL`, `EMNG MKT`), Fidelity active-fund names (Magellan, Blue Chip, Value Discovery, Multifactor), and individual-stock suffixes (`COMMON STOCK`, `INC COM`, `CORP COM`, `CAP STK`, trailing `COM`). `unmapped` is reported honestly so the bucket size signals where the map needs more coverage.
+- **`PortfolioHistory.allocation_breakdown`** — pulls the latest snapshot, classifies via AssetClassMapper, returns `{rows: [{class, label, value, pct, count, symbols}, ...], total_value, as_of}`.
+- **Asset-class breakdown section** on `/portfolio` — table with class label, $ value, % of portfolio (with inline horizontal bar), position count, and top 3 holdings per class. Linked symbols deep-link to `/analysis/:symbol`.
+- 36 new tests in [spec/asset_class_mapper_spec.rb](spec/asset_class_mapper_spec.rb) (classification edge cases) + new examples in [spec/portfolio_history_spec.rb](spec/portfolio_history_spec.rb) covering movers (split-aware, drift filter, dividend tolerance) and allocation_breakdown.
+- Verified live: classifies ~96% of a real 528-position $2M portfolio out of the box; gainers/laggards return realistic 1-month moves (MRVL +73%, PRYMY +41%, PWR +35%) instead of the share-count-conflated noise that the v0 market-value approach produced.
+
+**Tests:** 489 examples, 0 failures across 18 spec files.
+
 ### [PR #13] — Underwater-streak on tax-harvest candidates + retirement progress on /portfolio
 - **`PortfolioHistory.underwater_streak(symbol)`** ([app/portfolio_history.rb](app/portfolio_history.rb)) — counts consecutive snapshots ending at the latest where `market_value < cost_value`, returning `{snapshots:, since:, days:, currently_underwater: true}` or nil. Per-symbol series now also carries `cost_value` so the check is canonical.
 - **Underwater column** on `/portfolio/tax-harvest` candidates table — surfaces the streak with a conviction-level badge (low/med/high based on snapshot count) plus "N days since YYYY-MM-DD." Distinguishes noise (red 3 days) from conviction (red 60+ days) at a glance, sharpening the harvest-vs-wait call.
@@ -82,7 +93,7 @@
 - **`ProfileStore.retirement_target_value`** added (validated as non-negative float, partial-update semantics preserved). Profile config form on `/portfolio/tax-harvest` gains the input.
 - 6 new tests in [spec/retirement_projection_spec.rb](spec/retirement_projection_spec.rb) + 9 new in [spec/portfolio_history_spec.rb](spec/portfolio_history_spec.rb) (underwater streak edge cases) + 5 new in [spec/tax_harvest_spec.rb](spec/tax_harvest_spec.rb) (per_symbol_history wiring + retirement_target_value persistence).
 
-**Tests:** 453 examples, 0 failures across 17 spec files.
+**Tests:** 453 examples, 0 failures across 17 spec files. (Superseded by PR #14 — see above.)
 
 ### [PR #12] — Portfolio value-over-time chart + per-position sparklines + Fidelity backfill
 - **PortfolioHistory** ([app/portfolio_history.rb](app/portfolio_history.rb)) — pivots `ImportSnapshotStore` snapshots into a total time series (date / total_value / total_cost / unrealized_pl / day-over-day delta) and a per-symbol time series for sparklines. Inline-SVG sparkline renderer (no JS dependency, green/red by direction).
