@@ -1,5 +1,6 @@
 require 'date'
 require_relative 'import_snapshot_store'
+require_relative 'asset_class_mapper'
 
 # PortfolioHistory — pivots ImportSnapshotStore snapshots into time series
 # for the value-over-time chart + per-position sparklines on /portfolio.
@@ -142,6 +143,97 @@ module PortfolioHistory
     Date.parse(raw.to_s)
   rescue StandardError
     nil
+  end
+
+  # Top gainers + losers across the full snapshot window, ranked by **price**
+  # change (NOT market-value change). Using market-value would conflate price
+  # action with share additions/sales — a position that grew from $15 → $475
+  # because the user bought more shares would show up as a +3000% "gainer."
+  # We want to surface the security's price movement only, so we rank by
+  # per-share `last_price` ratio.
+  #
+  # Skips positions whose first OR last market_value is below `min_value` —
+  # tiny line items create noise in the % rankings.
+  #
+  # Returns:
+  #   { top_gainers: [{symbol:, change_pct:, change_value:, first_price:,
+  #                    last_price:, first_date:, last_date:, series: [...]}, ...],
+  #     top_losers:  [{...}, ...],
+  #     window:      { from: 'YYYY-MM-DD', to: 'YYYY-MM-DD', snapshots: N } }
+  #
+  # `change_value` = shares the user currently holds × (last_price - first_price).
+  # That's "what the price move did to my current position."
+  #
+  # `series` is the full per-symbol time series (used by the view for the
+  # sparkline alongside each row).
+  def movers(top_n: 5, source: 'fidelity', min_value: 1000)
+    snapshots = load_snapshots(source: source)
+    return { top_gainers: [], top_losers: [], window: nil } if snapshots.length < 2
+
+    per_sym = per_symbol_series(source: source)
+    rows = []
+
+    per_sym.each do |sym, series|
+      next if series.length < 2
+      first = series.first
+      last  = series.last
+      first_price = first[:last_price].to_f
+      last_price  = last[:last_price].to_f
+      next if first_price <= 0 || last_price <= 0
+      next if first[:market_value].to_f < min_value && last[:market_value].to_f < min_value
+
+      # Skip when shares changed substantially between first and last
+      # snapshot — could be a stock split (price changes, shares change
+      # inversely), a buy/sell, or a broker data inconsistency. In any of
+      # these cases the raw price ratio is misleading. We use 5%
+      # tolerance to absorb dividend reinvestment without false positives.
+      first_shares = first_price.positive? ? (first[:market_value].to_f / first_price) : 0
+      last_shares  = last_price.positive?  ? (last[:market_value].to_f  / last_price)  : 0
+      next if first_shares <= 0 || last_shares <= 0
+      shares_drift = ((last_shares - first_shares) / first_shares).abs
+      next if shares_drift > 0.05
+
+      change_pct = ((last_price - first_price) / first_price).round(6)
+      shares_now = last_shares
+      change_value = (shares_now * (last_price - first_price)).round(2)
+
+      rows << {
+        symbol:       sym,
+        change_pct:   change_pct,
+        change_value: change_value,
+        first_price:  first_price.round(4),
+        last_price:   last_price.round(4),
+        first_date:   first[:date],
+        last_date:    last[:date],
+        series:       series
+      }
+    end
+
+    sorted = rows.sort_by { |r| -r[:change_pct] }
+    {
+      top_gainers: sorted.first(top_n),
+      top_losers:  sorted.reverse.first(top_n).reject { |r| r[:change_pct] >= 0 },
+      window: {
+        from:      snapshots.first['file_date'],
+        to:        snapshots.last['file_date'],
+        snapshots: snapshots.length
+      }
+    }
+  end
+
+  # Asset-class breakdown of the latest snapshot. Thin wrapper around
+  # AssetClassMapper.breakdown — pulls the latest snapshot's positions and
+  # delegates the classification + summing.
+  def allocation_breakdown(source: 'fidelity')
+    snapshots = load_snapshots(source: source)
+    return { rows: [], total_value: 0.0, as_of: nil } if snapshots.empty?
+    latest = snapshots.last
+    rows   = AssetClassMapper.breakdown(latest['positions'] || [])
+    {
+      rows:        rows,
+      total_value: rows.sum { |r| r[:value] }.round(2),
+      as_of:       latest['file_date']
+    }
   end
 
   # Render a tiny inline SVG polyline for the per-position sparkline column.

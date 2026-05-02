@@ -112,6 +112,14 @@ The backfill button scans both `data/porfolio/fidelity/` (the canonical CSV inpu
 - **Underwater streak (per candidate)** — how many consecutive snapshots the position has been red, plus calendar days since the streak began. Conviction signal: a position red for 3 days is noise; red for 60+ days is conviction. Drives a low / med / high badge alongside each candidate.
 - **Replacement suggestions** — different-INDEX ETFs (SPY → VTI, QQQ → VUG, etc.). Same-INDEX trios (SPY ↔ VOO ↔ IVV) are intentionally NOT recommended.
 
+### Performance leaders & laggards on /portfolio
+
+Once you have 2+ snapshots, `/portfolio` shows a **Performance leaders & laggards** section with the top 5 gainers and top 5 laggards over the full snapshot window. Ranking is by per-share price change (not market-value change — that would conflate price action with your own buys and sells). Positions whose share count drifted >5% between snapshots are skipped automatically — catches stock splits and large new-money trades. Each row shows a small sparkline so you can see the shape of the move.
+
+### Asset-class breakdown on /portfolio
+
+`/portfolio` also shows an **Asset-class breakdown** of your latest snapshot — US stocks / international / target-date / bonds / real estate / commodities / balanced / cash / unmapped. Classification combines a hand-curated symbol map (~50 popular ETFs + your biggest holdings) with description-text heuristics ("FREEDOM 2035" → target-date, "SPON ADS" → international ADR, "INC COM" → US individual stock, etc.). Anything that doesn't match lands in the `unmapped` bucket — for big unmapped buckets, extend `app/asset_class_mapper.rb`. The breakdown reports % of portfolio plus the top 3 holdings per class.
+
 ### Retirement progress on /portfolio
 
 Once you've also set a **retirement target value** in the profile form, `/portfolio` shows a **Retirement progress** section with four cards: years remaining, current portfolio value, target at retirement (with the gap below), and the **required compound annual return** to hit the target. The section is hidden until current age + retirement age + target are all set.

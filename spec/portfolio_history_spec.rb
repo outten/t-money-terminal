@@ -182,6 +182,142 @@ RSpec.describe 'PortfolioHistory + backfill + /portfolio history' do
       end
     end
 
+    describe '.movers' do
+      it 'returns empty buckets when fewer than 2 snapshots exist' do
+        write_snapshot('2026-04-28', [{ 'symbol' => 'A', 'shares' => 10, 'last_price' => 100, 'current_value' => 1000 }])
+        out = PortfolioHistory.movers
+        expect(out[:top_gainers]).to be_empty
+        expect(out[:top_losers]).to be_empty
+        expect(out[:window]).to be_nil
+      end
+
+      it 'ranks symbols by per-share price change (not market_value change)' do
+        write_snapshot('2026-04-28', [
+          { 'symbol' => 'WIN',  'shares' => 10, 'last_price' => 100, 'current_value' => 1000 },
+          { 'symbol' => 'LOSE', 'shares' => 10, 'last_price' => 100, 'current_value' => 1000 },
+          { 'symbol' => 'FLAT', 'shares' => 10, 'last_price' => 100, 'current_value' => 1000 }
+        ])
+        write_snapshot('2026-04-29', [
+          { 'symbol' => 'WIN',  'shares' => 10, 'last_price' => 130, 'current_value' => 1300 },
+          { 'symbol' => 'LOSE', 'shares' => 10, 'last_price' => 80,  'current_value' => 800 },
+          { 'symbol' => 'FLAT', 'shares' => 10, 'last_price' => 100, 'current_value' => 1000 }
+        ])
+        out = PortfolioHistory.movers(top_n: 5)
+        expect(out[:top_gainers].first[:symbol]).to eq('WIN')
+        expect(out[:top_gainers].first[:change_pct]).to be_within(1e-6).of(0.30)
+        expect(out[:top_losers].first[:symbol]).to eq('LOSE')
+        expect(out[:top_losers].first[:change_pct]).to be_within(1e-6).of(-0.20)
+      end
+
+      it 'skips positions whose share count changed materially (split / large buy / data quirk)' do
+        # User went from 1 → 100 shares; price didn't move. Should be SKIPPED
+        # entirely — share-count drift > 5% suggests a split or buy, where
+        # the raw price ratio isn't a reliable performance signal.
+        write_snapshot('2026-04-28', [
+          { 'symbol' => 'BIGADD', 'shares' => 1,   'last_price' => 100, 'current_value' => 100 },
+          { 'symbol' => 'PRICE',  'shares' => 100, 'last_price' => 100, 'current_value' => 10_000 }
+        ])
+        write_snapshot('2026-04-29', [
+          { 'symbol' => 'BIGADD', 'shares' => 100, 'last_price' => 100, 'current_value' => 10_000 },
+          { 'symbol' => 'PRICE',  'shares' => 100, 'last_price' => 110, 'current_value' => 11_000 }
+        ])
+        out = PortfolioHistory.movers(top_n: 5, min_value: 0)
+        # PRICE moved 10% on its own. BIGADD is filtered out for shares drift.
+        expect(out[:top_gainers].map { |r| r[:symbol] }).to eq(['PRICE'])
+        expect(out[:top_gainers].first[:change_pct]).to be_within(1e-6).of(0.10)
+      end
+
+      it 'tolerates small share drift (dividend reinvestment ≤ 5%)' do
+        # Shares ticked from 100 → 102 (~2% drift, dividend DRIP). Should still rank.
+        write_snapshot('2026-04-28', [
+          { 'symbol' => 'DRIP', 'shares' => 100, 'last_price' => 100, 'current_value' => 10_000 }
+        ])
+        write_snapshot('2026-04-29', [
+          { 'symbol' => 'DRIP', 'shares' => 102, 'last_price' => 110, 'current_value' => 11_220 }
+        ])
+        out = PortfolioHistory.movers(top_n: 5, min_value: 0)
+        expect(out[:top_gainers].map { |r| r[:symbol] }).to eq(['DRIP'])
+        expect(out[:top_gainers].first[:change_pct]).to be_within(1e-6).of(0.10)
+      end
+
+      it 'filters out tiny positions below min_value to avoid noise' do
+        write_snapshot('2026-04-28', [
+          { 'symbol' => 'TINY', 'shares' => 1, 'last_price' => 0.01,    'current_value' => 0.01 },
+          { 'symbol' => 'BIG',  'shares' => 1, 'last_price' => 100_000, 'current_value' => 100_000 }
+        ])
+        write_snapshot('2026-04-29', [
+          { 'symbol' => 'TINY', 'shares' => 1, 'last_price' => 1.0,     'current_value' => 1.0 },
+          { 'symbol' => 'BIG',  'shares' => 1, 'last_price' => 110_000, 'current_value' => 110_000 }
+        ])
+        out = PortfolioHistory.movers(top_n: 5, min_value: 1000)
+        # TINY would be +9900% but it's filtered out for being below $1000 in
+        # both snapshots. Only BIG (+10%) makes the list.
+        expect(out[:top_gainers].map { |r| r[:symbol] }).to eq(['BIG'])
+      end
+
+      it 'caps at top_n' do
+        positions_first  = (1..10).map { |i| { 'symbol' => "S#{i}", 'shares' => 100, 'last_price' => 100, 'current_value' => 10_000 } }
+        positions_second = (1..10).map { |i| { 'symbol' => "S#{i}", 'shares' => 100, 'last_price' => 100 + i, 'current_value' => 100 * (100 + i) } }
+        write_snapshot('2026-04-28', positions_first)
+        write_snapshot('2026-04-29', positions_second)
+        out = PortfolioHistory.movers(top_n: 3)
+        expect(out[:top_gainers].length).to eq(3)
+      end
+
+      it 'top_losers excludes positive-change rows even when there are fewer than top_n actual losers' do
+        write_snapshot('2026-04-28', [
+          { 'symbol' => 'WIN1', 'shares' => 100, 'last_price' => 100, 'current_value' => 10_000 },
+          { 'symbol' => 'WIN2', 'shares' => 100, 'last_price' => 100, 'current_value' => 10_000 }
+        ])
+        write_snapshot('2026-04-29', [
+          { 'symbol' => 'WIN1', 'shares' => 100, 'last_price' => 110, 'current_value' => 11_000 },
+          { 'symbol' => 'WIN2', 'shares' => 100, 'last_price' => 105, 'current_value' => 10_500 }
+        ])
+        out = PortfolioHistory.movers
+        expect(out[:top_losers]).to be_empty
+        expect(out[:top_gainers].length).to eq(2)
+      end
+
+      it 'reports the full window dates + snapshot count' do
+        write_snapshot('2026-04-28', [{ 'symbol' => 'A', 'shares' => 100, 'last_price' => 100, 'current_value' => 10_000 }])
+        write_snapshot('2026-04-29', [{ 'symbol' => 'A', 'shares' => 100, 'last_price' => 110, 'current_value' => 11_000 }])
+        write_snapshot('2026-04-30', [{ 'symbol' => 'A', 'shares' => 100, 'last_price' => 105, 'current_value' => 10_500 }])
+        out = PortfolioHistory.movers
+        expect(out[:window][:from]).to eq('2026-04-28')
+        expect(out[:window][:to]).to eq('2026-04-30')
+        expect(out[:window][:snapshots]).to eq(3)
+      end
+    end
+
+    describe '.allocation_breakdown' do
+      it 'returns empty when no snapshots exist' do
+        out = PortfolioHistory.allocation_breakdown
+        expect(out[:rows]).to eq([])
+        expect(out[:total_value]).to eq(0.0)
+      end
+
+      it 'classifies the latest snapshot positions and reports as_of date' do
+        write_snapshot('2026-04-28', [
+          { 'symbol' => 'SPY', 'description' => '', 'current_value' => 1000 },
+          { 'symbol' => 'BND', 'description' => '', 'current_value' => 500 },
+          { 'symbol' => 'NEW',  'description' => 'FIDELITY FREEDOM 2035', 'current_value' => 500 }
+        ])
+        out = PortfolioHistory.allocation_breakdown
+        expect(out[:as_of]).to eq('2026-04-28')
+        expect(out[:total_value]).to eq(2000.0)
+        classes = out[:rows].map { |r| r[:class] }
+        expect(classes).to include('us_stocks', 'bonds', 'target_date')
+      end
+
+      it 'always uses the latest snapshot when multiple exist' do
+        write_snapshot('2026-04-28', [{ 'symbol' => 'SPY', 'description' => '', 'current_value' => 1000 }])
+        write_snapshot('2026-04-29', [{ 'symbol' => 'BND', 'description' => '', 'current_value' => 500 }])
+        out = PortfolioHistory.allocation_breakdown
+        expect(out[:as_of]).to eq('2026-04-29')
+        expect(out[:rows].first[:class]).to eq('bonds')
+      end
+    end
+
     describe '.sparkline_svg' do
       it 'returns an em-dash for fewer than 2 points' do
         expect(PortfolioHistory.sparkline_svg([])).to include('—')

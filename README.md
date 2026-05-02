@@ -51,6 +51,8 @@ TradingView [lightweight-charts](https://www.tradingview.com/lightweight-charts/
 - **Drift view** at `/portfolio/drift` — what changed between your two most recent broker imports (added / removed / scaled, sorted biggest-mover-first)
 - **Sell preview** — `POST /api/portfolio/sell/preview` returns the breakdown (short/long P&L + wash-sale flags) without committing.
 - **Value over time + per-position sparklines** ([PortfolioHistory](app/portfolio_history.rb)) — `/portfolio` renders a Chart.js line chart of total portfolio value across every Fidelity snapshot, with day-over-day delta in the tooltip; the positions table gains a Trend column with an inline-SVG sparkline per symbol (green if last ≥ first, red otherwise). One snapshot = one data point, so the X axis is "import dates" not calendar days. **Backfill button** on `/portfolio` snapshots every Fidelity CSV that doesn't yet have a JSON snapshot — without touching PortfolioStore, the quote cache, or kicking off historical prefetch — so dropped historical CSVs become history without disturbing current state. Cache-only render.
+- **Performance leaders & laggards** — `/portfolio` ranks the top 5 gainers and top 5 laggards across the snapshot window by **per-share price change** (not market-value change, which would conflate price action with the user's own buys/sells). Filters out positions whose share count drifted >5% between first and last snapshot — catches stock splits, big buys, and broker data quirks. Each row carries a 60×18 sparkline.
+- **Asset-class breakdown** ([AssetClassMapper](app/asset_class_mapper.rb)) — `/portfolio` classifies the latest snapshot's positions into US stocks / international stocks / target-date / bonds / balanced / real estate / commodities / cash / unmapped, with $ + %-of-portfolio and the top 3 holdings per class. Classification uses a hand-curated symbol map plus description-text heuristics (FIDELITY FREEDOM 2035 → target-date, ADS EA REP → international, etc.). The map covers ~96% of a real ~$2M Fidelity portfolio out of the box; the unmapped bucket is honestly reported so coverage gaps are visible.
 - **Tax-loss harvesting** at `/portfolio/tax-harvest` — open lots underwater are ranked by estimated tax savings (loss × your federal short-/long-term rate, plus optional state + NIIT), with per-candidate `harvest` / `wait` / `skip` recommendations branched on risk tolerance, the ST→LT crossing window, and wash-sale risk. Each candidate also carries an **Underwater streak** (snapshots-since-red and calendar days, derived from `PortfolioHistory.underwater_streak`) so noise (red 3 days) is visibly distinct from conviction (red 60+ days). Includes a YTD realised summary with $3 k ordinary-offset cap progress, a "lots crossing ST→LT in ≤ 30 days" watchlist, and heuristic different-INDEX replacement-security suggestions (e.g. SPY → VTI, QQQ → VUG). Configurable user profile (current age, retirement age, risk tolerance, marginal rates, NIIT, retirement target value) lives in [ProfileStore](app/profile_store.rb) at `data/profile.json`. See [TaxHarvester](app/tax_harvester.rb).
 - **Retirement progress** ([RetirementProjection](app/retirement_projection.rb)) — when both ages and `retirement_target_value` are set in your profile, `/portfolio` renders a "Retirement progress" section showing years remaining, current value, target, gap, and the **required compound annual return** to hit the target by retirement age. Includes a **caveated verdict** (`On track` / `Tight` / `Not on track`) anchored to long-run nominal CAGRs from cited sources (NYU Stern Damodaran 1928–2023 dataset; Bogleheads historical returns wiki) so you can sanity-check whether the required return is realistic against historical equity / bond / 60-40 norms. Citations open in a new tab.
 
@@ -147,7 +149,7 @@ See [CREDENTIALS.md](CREDENTIALS.md) for signup walkthroughs and the FMP free-ti
 ### Common tasks
 
 ```bash
-make test                        # RSpec suite (currently 453 examples)
+make test                        # RSpec suite (currently 489 examples)
 make refresh-cache               # Warm market-data cache for the universe
 make refresh-providers           # Warm FMP / FRED / News / Stooq caches
 make refresh-all                 # Both, in one shot — REGIONS ∪ portfolio ∪ watchlist
@@ -177,8 +179,9 @@ app/
   wash_sale.rb                # IRS wash-sale risk flagging on loss-sells
   profile_store.rb            # User investment profile (age, retirement, risk, tax rates) at data/profile.json
   tax_harvester.rb            # Loss-harvest candidate ranking, ST→LT crossings, recommendations
-  portfolio_history.rb        # Pivots ImportSnapshotStore snapshots into total + per-symbol time series; sparkline SVG; underwater_streak
+  portfolio_history.rb        # Pivots ImportSnapshotStore snapshots into total + per-symbol time series; sparkline SVG; underwater_streak; movers; allocation_breakdown
   retirement_projection.rb    # Required-CAGR math for /portfolio retirement-progress section (no I/O)
+  asset_class_mapper.rb       # Symbol+description → asset class (curated map + description heuristics)
   fidelity_importer.rb        # Broker CSV parser + reconciliation orchestrator
   import_snapshot_store.rb    # Per-source snapshot persistence (audit + drift)
   portfolio_diff.rb           # Snapshot-to-snapshot diff math
@@ -190,7 +193,7 @@ app/
 views/                        # ERB templates with shared layout
 public/                       # style.css, app.js (chart), features.js (search/watchlist/alerts/portfolio)
 scripts/                      # refresh_cache, refresh_providers, scheduler, check_alerts, cache_status
-spec/                         # RSpec — 453 examples across 17 spec files
+spec/                         # RSpec — 489 examples across 18 spec files
 data/cache/                   # Hierarchical disk cache
 data/imports/                 # Broker import snapshots (audit + drift)
 data/porfolio/fidelity/       # Drop your Fidelity Portfolio_Positions_*.csv here

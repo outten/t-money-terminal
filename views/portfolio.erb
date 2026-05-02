@@ -127,6 +127,141 @@
   </section>
 <% end %>
 
+<% if @movers && @movers[:window] && (@movers[:top_gainers].any? || @movers[:top_losers].any?) %>
+  <section class="benchmark-section" style="margin-top: 18px">
+    <h3>
+      Performance leaders &amp; laggards
+      <span class="muted" style="font-size:0.78rem; font-weight:normal">
+        &middot; <%= @movers[:window][:from] %> → <%= @movers[:window][:to] %>
+        &middot; <%= @movers[:window][:snapshots] %> snapshots
+      </span>
+    </h3>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px">
+      <div>
+        <h4 style="margin: 0 0 8px 0; font-size: 0.95rem">Top 5 gainers</h4>
+        <% if @movers[:top_gainers].empty? %>
+          <p class="muted">No gainers in this window.</p>
+        <% else %>
+          <table class="data-table" style="font-size: 0.88rem">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th class="num">Change</th>
+                <th class="num">$ Δ</th>
+                <th>Trend</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% @movers[:top_gainers].each do |r| %>
+                <tr>
+                  <td><a href="/analysis/<%= r[:symbol] %>"><%= r[:symbol] %></a></td>
+                  <td class="num mono positive"><%= format_percent(r[:change_pct]) %></td>
+                  <td class="num mono positive"><%= format_money(r[:change_value]) %></td>
+                  <td><%= PortfolioHistory.sparkline_svg(r[:series], width: 60, height: 18) %></td>
+                </tr>
+              <% end %>
+            </tbody>
+          </table>
+        <% end %>
+      </div>
+      <div>
+        <h4 style="margin: 0 0 8px 0; font-size: 0.95rem">Top 5 laggards</h4>
+        <% if @movers[:top_losers].empty? %>
+          <p class="muted">No losers in this window — every position is up.</p>
+        <% else %>
+          <table class="data-table" style="font-size: 0.88rem">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th class="num">Change</th>
+                <th class="num">$ Δ</th>
+                <th>Trend</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% @movers[:top_losers].each do |r| %>
+                <tr>
+                  <td><a href="/analysis/<%= r[:symbol] %>"><%= r[:symbol] %></a></td>
+                  <td class="num mono negative"><%= format_percent(r[:change_pct]) %></td>
+                  <td class="num mono negative"><%= format_money(r[:change_value]) %></td>
+                  <td><%= PortfolioHistory.sparkline_svg(r[:series], width: 60, height: 18) %></td>
+                </tr>
+              <% end %>
+            </tbody>
+          </table>
+        <% end %>
+      </div>
+    </div>
+    <p class="data-source">
+      Ranked by % change in market value from the first snapshot to the latest. Window length depends on
+      your snapshot cadence — see the value-over-time chart above for the full trajectory.
+    </p>
+  </section>
+<% end %>
+
+<% if @allocation && @allocation[:rows].any? %>
+  <section class="benchmark-section" style="margin-top: 18px">
+    <h3>
+      Asset-class breakdown
+      <span class="muted" style="font-size:0.78rem; font-weight:normal">
+        &middot; <%= format_money(@allocation[:total_value]) %> total
+        <% if @allocation[:as_of] %>&middot; as of <%= @allocation[:as_of] %><% end %>
+      </span>
+    </h3>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Class</th>
+          <th class="num">Value</th>
+          <th class="num">% of portfolio</th>
+          <th class="num">Positions</th>
+          <th>Top holdings</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% @allocation[:rows].each do |r| %>
+          <tr>
+            <td>
+              <strong><%= r[:label] %></strong>
+              <% if r[:class] == 'unmapped' %>
+                <span class="muted" style="font-size: 0.78rem">(not yet classified)</span>
+              <% end %>
+            </td>
+            <td class="num mono"><%= format_money(r[:value]) %></td>
+            <td class="num mono">
+              <%= format_percent(r[:pct], digits: 1) %>
+              <span class="muted" style="display: inline-block; vertical-align: middle; margin-left: 6px;
+                                          background: #e0e0e0; height: 8px; width: 80px; position: relative">
+                <span style="display: block; height: 100%; width: <%= (r[:pct] * 100).round(1) %>%;
+                             background: <%=
+                               { 'us_stocks' => '#0071e3', 'intl_stocks' => '#34c759',
+                                 'bonds' => '#ff9500', 'real_estate' => '#af52de',
+                                 'commodities' => '#ffcc00', 'target_date' => '#5ac8fa',
+                                 'balanced' => '#a47148', 'cash' => '#999',
+                                 'unmapped' => '#cc6680' }[r[:class]] || '#999' %>"></span>
+              </span>
+            </td>
+            <td class="num mono"><%= r[:count] %></td>
+            <td class="muted" style="font-size: 0.85rem">
+              <%= r[:symbols].first(3).map { |s| "<a href='/analysis/#{s[:symbol]}'>#{s[:symbol]}</a>" }.join(' &middot; ') %>
+              <% if r[:symbols].length > 3 %>
+                &middot; +<%= r[:symbols].length - 3 %> more
+              <% end %>
+            </td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+    <p class="data-source">
+      Classification uses a hand-curated symbol map plus description-text heuristics
+      (e.g. "<em>FREEDOM 2035</em>" → target-date, "<em>EMERGING MARKETS</em>" → international, "<em>S&amp;P 500</em>" → US stocks).
+      Anything we couldn't confidently map lands in <strong>unmapped</strong> — for big "unmapped" buckets, the symbol map
+      in <code>app/asset_class_mapper.rb</code> is where to add coverage.
+      Target-date / glide-path funds are reported as a single class even though they internally hold a stock+bond mix.
+    </p>
+  </section>
+<% end %>
+
 <% if @retirement %>
   <section class="benchmark-section" style="margin-top: 18px">
     <h3>
