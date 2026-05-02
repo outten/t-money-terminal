@@ -262,14 +262,168 @@
   </section>
 <% end %>
 
-<% if @retirement %>
+<% if @account_breakdown && @account_breakdown[:rows].any? %>
   <section class="benchmark-section" style="margin-top: 18px">
     <h3>
-      Retirement progress
+      Account-type allocation
       <span class="muted" style="font-size:0.78rem; font-weight:normal">
-        &middot; <a href="/portfolio/tax-harvest">edit profile →</a>
+        &middot; <%= format_money(@account_breakdown[:total_value]) %> total
+        <% if @account_breakdown[:as_of] %>&middot; as of <%= @account_breakdown[:as_of] %><% end %>
       </span>
     </h3>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Account</th>
+          <th>Tax kind</th>
+          <th class="num">Value</th>
+          <th class="num">% of portfolio</th>
+          <th class="num">Positions</th>
+          <th>Top holdings</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% @account_breakdown[:rows].each do |r| %>
+          <tr>
+            <td><strong><%= r[:account] %></strong></td>
+            <td>
+              <span class="signal-badge holding-<%=
+                { 'taxable' => 'short', 'roth' => 'long',
+                  'tax_deferred_401k' => 'long', 'traditional_ira' => 'long',
+                  'deferred_annuity' => 'unknown', 'hsa' => 'long' }[r[:kind]] || 'unknown' %>"
+                    title="<%= r[:kind] %>">
+                <%= r[:kind_label] %>
+              </span>
+            </td>
+            <td class="num mono"><%= format_money(r[:value]) %></td>
+            <td class="num mono">
+              <%= format_percent(r[:pct], digits: 1) %>
+              <span class="muted" style="display: inline-block; vertical-align: middle; margin-left: 6px;
+                                          background: #e0e0e0; height: 8px; width: 80px; position: relative">
+                <span style="display: block; height: 100%; width: <%= (r[:pct] * 100).round(1) %>%;
+                             background: <%= AccountClassifier.kind_color(r[:kind]) %>"></span>
+              </span>
+            </td>
+            <td class="num mono"><%= r[:count] %></td>
+            <td class="muted" style="font-size: 0.85rem">
+              <%= r[:top_holdings].first(3).map { |h| "<a href='/analysis/#{h[:symbol]}'>#{h[:symbol]}</a>" }.join(' &middot; ') %>
+              <% if r[:top_holdings].length > 3 %>
+                &middot; +<%= r[:top_holdings].length - 3 %> more
+              <% end %>
+            </td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+    <p class="data-source">
+      Tax kind classification follows the broker account name (Roth IRA, 401(k) / 403(b), Traditional IRA, etc.).
+      <% if @account_breakdown[:multi_account_positions] && @account_breakdown[:multi_account_positions] > 0 %>
+        <strong><%= @account_breakdown[:multi_account_positions] %> position<%= @account_breakdown[:multi_account_positions] == 1 ? '' : 's' %> span<%= @account_breakdown[:multi_account_positions] == 1 ? 's' : '' %> multiple accounts</strong>
+        — value is split evenly across accounts (a v1 approximation, ~&lt;1% of typical portfolios).
+      <% end %>
+      Account-type visibility is the foundation for the planned Roth-conversion-window, RMD-projection, and tax-efficient-location features (TODOs U / V / W).
+    </p>
+  </section>
+<% end %>
+
+<% if @expense_audit && @expense_audit[:rows].any? %>
+  <section class="benchmark-section" style="margin-top: 18px">
+    <h3>
+      Expense-ratio audit
+      <span class="muted" style="font-size:0.78rem; font-weight:normal">
+        &middot; <%= @expense_audit[:rows].length %> covered fund<%= @expense_audit[:rows].length == 1 ? '' : 's' %>
+        <% if @expense_audit[:as_of] %>&middot; as of <%= @expense_audit[:as_of] %><% end %>
+      </span>
+    </h3>
+    <div class="portfolio-summary">
+      <div class="summary-card">
+        <div class="summary-label">Annual fee drag</div>
+        <div class="summary-value mono <%= @expense_audit[:total_known_fee] > 0 ? 'negative' : '' %>">
+          <%= format_money(@expense_audit[:total_known_fee]) %>
+        </div>
+        <div class="summary-sub muted">across covered funds, per year</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Weighted average ER</div>
+        <div class="summary-value mono"><%= format_percent(@expense_audit[:weighted_avg_ratio], digits: 2) %></div>
+        <div class="summary-sub muted">on <%= format_money(@expense_audit[:total_known_value]) %> covered</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Coverage</div>
+        <div class="summary-value mono">
+          <%= ((@expense_audit[:total_known_value] / (@expense_audit[:total_known_value] + @expense_audit[:unknown][:value])) * 100).round(1) %>%
+        </div>
+        <div class="summary-sub muted">
+          <%= @expense_audit[:unknown][:count] %> position<%= @expense_audit[:unknown][:count] == 1 ? '' : 's' %>
+          (<%= format_money(@expense_audit[:unknown][:value]) %>) unknown
+        </div>
+      </div>
+    </div>
+    <details class="positions-collapsible" style="margin-top: 12px">
+      <summary class="positions-collapsible-summary">
+        <span class="positions-chevron" aria-hidden="true">▸</span>
+        <span class="positions-summary-text">
+          <strong>Top 25 fee-drag positions</strong>
+          <span class="muted">— click to show / hide</span>
+        </span>
+      </summary>
+      <table class="data-table" style="margin-top: 10px">
+        <thead>
+          <tr>
+            <th>Symbol</th>
+            <th>Description</th>
+            <th class="num">Value</th>
+            <th class="num">ER</th>
+            <th class="num">Annual fee</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% @expense_audit[:rows].first(25).each do |r| %>
+            <tr>
+              <td><a href="/analysis/<%= r[:symbol] %>"><%= r[:symbol] %></a></td>
+              <td class="muted" style="font-size: 0.85rem"><%= r[:description] %></td>
+              <td class="num mono"><%= format_money(r[:value]) %></td>
+              <td class="num mono <%= r[:expense_ratio] >= 0.005 ? 'negative' : (r[:expense_ratio] >= 0.0025 ? '' : 'positive') %>">
+                <%= format_percent(r[:expense_ratio], digits: 2) %>
+              </td>
+              <td class="num mono <%= r[:annual_fee] >= 100 ? 'negative' : '' %>"><%= format_money(r[:annual_fee]) %></td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    </details>
+    <p class="data-source">
+      Annual fee = position market value × the fund's prospectus expense ratio. We carry a curated table of <%= ExpenseRatioMap.coverage_count %> common ETFs and mutual funds; uncovered positions (individual stocks, niche funds, CUSIPs) are reported in the "unknown" bucket and excluded from the totals — extending <code>app/expense_ratio_map.rb</code> is where to add coverage. ≥0.50% ER is shown in red as a rough fee-drag heuristic; ≤0.25% in green.
+    </p>
+  </section>
+<% end %>
+
+<section class="benchmark-section" style="margin-top: 18px">
+  <h3>
+    Retirement planning
+    <span class="muted" style="font-size:0.78rem; font-weight:normal">
+      &middot; <a href="/portfolio/tax-harvest">edit profile →</a>
+    </span>
+  </h3>
+  <% if @retirement %>
+    <%
+      verdict_class =
+        case @retirement[:verdict]
+        when :on_track_safe, :on_track_balanced, :at_goal then 'positive'
+        when :tight_equity                                then ''
+        else                                                   'negative'
+        end
+      sp = @retirement[:spending]
+      sp_class =
+        if sp.nil? then nil
+        else
+          case sp[:verdict]
+          when :perpetual, :comfortable, :thirty_year_safe then 'positive'
+          when :tight                                       then ''
+          else                                                   'negative'
+          end
+        end
+    %>
     <div class="portfolio-summary">
       <div class="summary-card">
         <div class="summary-label">Years remaining</div>
@@ -277,68 +431,49 @@
         <div class="summary-sub muted">until retirement age</div>
       </div>
       <div class="summary-card">
-        <div class="summary-label">Current value</div>
-        <div class="summary-value mono"><%= format_money(@retirement[:current_value]) %></div>
-        <div class="summary-sub muted">live or latest snapshot</div>
-      </div>
-      <div class="summary-card">
-        <div class="summary-label">Target at retirement</div>
-        <div class="summary-value mono"><%= format_money(@retirement[:target_value]) %></div>
-        <div class="summary-sub muted">
-          <% if @retirement[:gap] > 0 %>
-            gap <%= format_money(@retirement[:gap]) %>
-          <% else %>
-            already at goal
-          <% end %>
-        </div>
-      </div>
-      <div class="summary-card">
         <div class="summary-label">Required annual return</div>
         <% if @retirement[:status] == 'at_goal' %>
           <div class="summary-value mono positive">0.0%</div>
-          <div class="summary-sub muted">already at target</div>
-        <% elsif @retirement[:required_annual_return] %>
-          <% rr = @retirement[:required_annual_return] %>
-          <% rr_class = rr <= 0.05 ? 'positive' : (rr <= 0.10 ? '' : 'negative') %>
-          <div class="summary-value mono <%= rr_class %>"><%= format_percent(rr, digits: 2) %></div>
-          <div class="summary-sub muted">CAGR for <%= @retirement[:years_remaining] %>y</div>
         <% else %>
-          <div class="summary-value mono">—</div>
-          <div class="summary-sub muted">missing inputs</div>
+          <div class="summary-value mono <%= verdict_class %>">
+            <%= format_percent(@retirement[:nominal_required_return], digits: 2) %>
+          </div>
+        <% end %>
+        <div class="summary-sub muted">nominal CAGR</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Years portfolio lasts</div>
+        <% if sp.nil? %>
+          <div class="summary-value mono muted">—</div>
+          <div class="summary-sub muted">set monthly spending →</div>
+        <% elsif sp[:years_portfolio_lasts].infinite? %>
+          <div class="summary-value mono positive">Indefinite</div>
+          <div class="summary-sub muted">@ <%= format_percent(sp[:withdrawal_rate]) %> withdrawal</div>
+        <% else %>
+          <% yrs = sp[:years_portfolio_lasts].round %>
+          <div class="summary-value mono <%= sp_class %>"><%= yrs %> yrs</div>
+          <div class="summary-sub muted">@ <%= format_percent(sp[:withdrawal_rate]) %> withdrawal</div>
         <% end %>
       </div>
     </div>
-    <% if @retirement[:verdict_summary] %>
-      <%
-        verdict_class =
-          case @retirement[:verdict]
-          when :on_track_safe, :on_track_balanced, :at_goal then 'positive'
-          when :tight_equity                                then ''
-          else                                                   'negative'
-          end
-      %>
-      <p style="margin-top: 12px; padding: 10px 14px; border-left: 3px solid <%=
-                verdict_class == 'positive' ? '#0a8a3a' : (verdict_class == 'negative' ? '#b00020' : '#c08400') %>;
-                background: rgba(0,0,0,0.02); font-size: 0.92rem">
-        <strong class="<%= verdict_class %>"><%= @retirement[:verdict_summary] %></strong>
-      </p>
-      <p class="data-source">
-        <strong>Caveat.</strong> Verdict is a directional read against long-run historical CAGRs, not a forecast.
-        Real outcomes depend on sequence of returns, fees, taxes, contributions, and the actual asset mix you hold.
-        Inflation isn't modelled — these are nominal returns.
-        Reference benchmarks
-        <% @retirement[:benchmarks].each_with_index do |b, i| %>
-          <%= '· ' if i > 0 %><%= b[:label] %>: <strong><%= (b[:return] * 100).round(1) %>%</strong>
-        <% end %>.
-        Sources:
-        <% @retirement[:citations].each_with_index do |c, i| %>
-          <%= '· ' if i > 0 %><a href="<%= c[:url] %>" target="_blank" rel="noopener noreferrer"><%= c[:label] %></a>
-        <% end %>.
-        Adjust the target on the <a href="/portfolio/tax-harvest">tax-harvest profile form</a>.
-      </p>
-    <% end %>
-  </section>
-<% end %>
+    <p style="margin-top: 12px; font-size: 0.92rem">
+      <strong class="<%= verdict_class %>"><%= @retirement[:verdict_summary].split('.').first %>.</strong>
+      <% if sp && sp[:verdict_summary] %>
+        <strong class="<%= sp_class %>"><%= sp[:verdict_summary].split('.').first %>.</strong>
+      <% end %>
+      <a href="/portfolio/retirement" class="btn-primary" style="display:inline-block; margin-left:8px; padding:4px 12px; font-size:0.85rem">
+        See full projection &amp; verdict →
+      </a>
+    </p>
+  <% else %>
+    <p class="data-source">
+      Set your current age, retirement age, and target on
+      <a href="/portfolio/tax-harvest">the profile form</a> to enable the projection.
+      <a href="/portfolio/retirement">→ Open retirement planning page</a>
+    </p>
+  <% end %>
+</section>
+
 
 <% if @rows.empty? %>
   <div class="notice">No open positions. Buy your first lot below.</div>

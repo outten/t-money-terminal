@@ -289,6 +289,124 @@ RSpec.describe 'PortfolioHistory + backfill + /portfolio history' do
       end
     end
 
+    describe '.account_breakdown' do
+      it 'returns an empty bundle when no snapshots exist' do
+        out = PortfolioHistory.account_breakdown
+        expect(out[:rows]).to eq([])
+        expect(out[:total_value]).to eq(0.0)
+      end
+
+      it 'sums values by account name and computes percentages' do
+        write_snapshot('2026-04-30', [
+          { 'symbol' => 'A', 'current_value' => 1000, 'accounts' => ['Individual - TOD'] },
+          { 'symbol' => 'B', 'current_value' => 500,  'accounts' => ['ROTH IRA'] },
+          { 'symbol' => 'C', 'current_value' => 500,  'accounts' => ['Individual - TOD'] }
+        ])
+        out = PortfolioHistory.account_breakdown
+        expect(out[:total_value]).to eq(2000.0)
+        rows = out[:rows]
+        taxable = rows.find { |r| r[:account] == 'Individual - TOD' }
+        roth    = rows.find { |r| r[:account] == 'ROTH IRA' }
+        expect(taxable[:value]).to eq(1500.0)
+        expect(taxable[:kind]).to eq('taxable')
+        expect(taxable[:pct]).to be_within(1e-6).of(0.75)
+        expect(roth[:value]).to eq(500.0)
+        expect(roth[:kind]).to eq('roth')
+      end
+
+      it 'splits multi-account positions evenly and reports the count' do
+        write_snapshot('2026-04-30', [
+          { 'symbol' => 'AVGO', 'current_value' => 14_000, 'accounts' => ['ROTH IRA', 'Individual - TOD'] }
+        ])
+        out = PortfolioHistory.account_breakdown
+        expect(out[:multi_account_positions]).to eq(1)
+        roth    = out[:rows].find { |r| r[:account] == 'ROTH IRA' }
+        taxable = out[:rows].find { |r| r[:account] == 'Individual - TOD' }
+        expect(roth[:value]).to eq(7000.0)
+        expect(taxable[:value]).to eq(7000.0)
+      end
+
+      it 'sorts rows by value descending' do
+        write_snapshot('2026-04-30', [
+          { 'symbol' => 'A', 'current_value' => 100, 'accounts' => ['Account A'] },
+          { 'symbol' => 'B', 'current_value' => 1000, 'accounts' => ['Account B'] },
+          { 'symbol' => 'C', 'current_value' => 500, 'accounts' => ['Account C'] }
+        ])
+        out = PortfolioHistory.account_breakdown
+        expect(out[:rows].map { |r| r[:account] }).to eq(['Account B', 'Account C', 'Account A'])
+      end
+
+      it 'top_holdings within each account is sorted by value' do
+        write_snapshot('2026-04-30', [
+          { 'symbol' => 'SMALL', 'current_value' => 100,  'accounts' => ['IRA'] },
+          { 'symbol' => 'BIG',   'current_value' => 1000, 'accounts' => ['IRA'] },
+          { 'symbol' => 'MED',   'current_value' => 500,  'accounts' => ['IRA'] }
+        ])
+        ira = PortfolioHistory.account_breakdown[:rows].first
+        expect(ira[:top_holdings].map { |h| h[:symbol] }).to eq(%w[BIG MED SMALL])
+      end
+
+      it 'falls back to "Other / unclassified" when accounts is missing' do
+        write_snapshot('2026-04-30', [
+          { 'symbol' => 'X', 'current_value' => 100 }
+        ])
+        out = PortfolioHistory.account_breakdown
+        expect(out[:rows].first[:account]).to eq('Other / unclassified')
+      end
+    end
+
+    describe '.expense_ratio_audit' do
+      it 'returns an empty audit when no snapshots exist' do
+        out = PortfolioHistory.expense_ratio_audit
+        expect(out[:rows]).to eq([])
+        expect(out[:total_known_fee]).to eq(0.0)
+      end
+
+      it 'computes annual fee per holding and sorts by fee descending' do
+        write_snapshot('2026-04-30', [
+          { 'symbol' => 'VOO',   'description' => '', 'current_value' => 100_000 }, # 0.03%
+          { 'symbol' => 'FFTHX', 'description' => '', 'current_value' => 100_000 }, # 0.75%
+          { 'symbol' => 'BND',   'description' => '', 'current_value' => 100_000 }  # 0.03%
+        ])
+        out = PortfolioHistory.expense_ratio_audit
+        expect(out[:rows].first[:symbol]).to eq('FFTHX')
+        expect(out[:rows].first[:annual_fee]).to be_within(0.5).of(750.0)
+        expect(out[:total_known_fee]).to be > 800.0
+        expect(out[:rows].length).to eq(3)
+      end
+
+      it 'treats individual common stocks as covered with 0% ER (no management fee)' do
+        write_snapshot('2026-04-30', [
+          { 'symbol' => 'NVDA', 'description' => 'NVIDIA CORPORATION COM', 'current_value' => 50_000 }
+        ])
+        out = PortfolioHistory.expense_ratio_audit
+        # Should be covered (in :rows), not in :unknown
+        expect(out[:rows].length).to eq(1)
+        expect(out[:rows].first[:expense_ratio]).to eq(0.0)
+        expect(out[:rows].first[:annual_fee]).to eq(0.0)
+        expect(out[:unknown][:count]).to eq(0)
+      end
+
+      it 'puts genuinely unknown funds in the unknown bucket' do
+        write_snapshot('2026-04-30', [
+          { 'symbol' => 'OBSCUREFUND', 'description' => 'SOME OBSCURE FUND', 'current_value' => 1000 }
+        ])
+        out = PortfolioHistory.expense_ratio_audit
+        expect(out[:rows]).to be_empty
+        expect(out[:unknown][:count]).to eq(1)
+        expect(out[:unknown][:value]).to eq(1000.0)
+      end
+
+      it 'computes weighted_avg_ratio across known-ER holdings only' do
+        write_snapshot('2026-04-30', [
+          { 'symbol' => 'VOO',   'current_value' => 100_000 },  # 0.0003
+          { 'symbol' => 'FFTHX', 'current_value' => 100_000 }   # 0.0075
+        ])
+        out = PortfolioHistory.expense_ratio_audit
+        expect(out[:weighted_avg_ratio]).to be_within(1e-4).of((0.0003 + 0.0075) / 2.0)
+      end
+    end
+
     describe '.allocation_breakdown' do
       it 'returns empty when no snapshots exist' do
         out = PortfolioHistory.allocation_breakdown

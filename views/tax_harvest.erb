@@ -95,8 +95,17 @@
           <option value="true" <%= @profile[:niit_applies] ? 'selected' : '' %>>Yes (3.8% on net investment income, high earners)</option>
         </select>
       </label>
-      <label>Retirement target value ($, optional)
+      <label>Retirement target value ($, optional, in TODAY's dollars)
         <input type="number" step="1000" min="0" name="retirement_target_value" value="<%= @profile[:retirement_target_value] %>" placeholder="2500000">
+      </label>
+      <label>Inflation assumption (decimal, e.g. 0.025 = 2.5%)
+        <input type="number" step="0.005" min="0" max="0.2" name="inflation_assumption_rate" value="<%= @profile[:inflation_assumption_rate] %>" placeholder="0.025">
+      </label>
+      <label>Monthly retirement spending (today's $, optional)
+        <input type="number" step="100" min="0" name="monthly_retirement_spending" value="<%= @profile[:monthly_retirement_spending] %>" placeholder="10000">
+      </label>
+      <label>Post-retirement real return (decimal, default 4%)
+        <input type="number" step="0.005" min="-0.05" max="0.20" name="post_retirement_real_return" value="<%= @profile[:post_retirement_real_return] %>" placeholder="0.04">
       </label>
       <button type="submit" class="btn-primary">Save profile</button>
     </form>

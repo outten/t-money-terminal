@@ -54,6 +54,7 @@ make run                # auto-reloads on file changes → http://localhost:4567
 | Portfolio | `/portfolio` | Multi-lot positions with live unrealized P&L, signal badges, drift link, broker import button |
 | Trade history | `/trades` | Append-only BUY/SELL log with realized P&L YTD + lifetime |
 | Portfolio drift | `/portfolio/drift` | What changed between your two most recent broker imports |
+| Retirement planning | `/portfolio/retirement` | Years remaining · required CAGR vs historical norms · spending sustainability (sustainable monthly, withdrawal rate, years portfolio lasts) · cited verdict |
 | Tax-loss harvesting | `/portfolio/tax-harvest` | Underwater lots ranked by estimated tax savings · ST→LT crossing watchlist · YTD $3 k cap progress · replacement-security suggestions |
 | Compare | `/compare?symbols=AAPL,MSFT&period=1y` | Rebased-to-100 multi-symbol performance chart (≤ 6 symbols) |
 | Correlations | `/correlations?symbols=...&period=1y` | Pairwise daily-return correlation heatmap |
@@ -119,6 +120,41 @@ Once you have 2+ snapshots, `/portfolio` shows a **Performance leaders & laggard
 ### Asset-class breakdown on /portfolio
 
 `/portfolio` also shows an **Asset-class breakdown** of your latest snapshot — US stocks / international / target-date / bonds / real estate / commodities / balanced / cash / unmapped. Classification combines a hand-curated symbol map (~50 popular ETFs + your biggest holdings) with description-text heuristics ("FREEDOM 2035" → target-date, "SPON ADS" → international ADR, "INC COM" → US individual stock, etc.). Anything that doesn't match lands in the `unmapped` bucket — for big unmapped buckets, extend `app/asset_class_mapper.rb`. The breakdown reports % of portfolio plus the top 3 holdings per class.
+
+### Account-type allocation on /portfolio
+
+A separate **Account-type allocation** section groups your holdings by broker account name (Individual / ROTH IRA / 401(k) / Deferred Annuity / etc.) and labels each with its tax kind. Useful at-a-glance: how much sits in each tax bucket, top holdings per account, and the foundation for the planned Roth-conversion-window, RMD-projection, and tax-efficient-location features. The rare position that spans multiple accounts has its value split evenly with the imprecision disclosed in the section footer.
+
+### Expense-ratio audit on /portfolio
+
+The **Expense-ratio audit** section answers "how much am I paying in fund fees per year?" by joining each holding to a curated expense-ratio table (popular ETFs + your top-by-value funds + your 401(k)'s institutional-class CUSIPs). Three summary cards (annual fee drag in $, weighted-average ER, coverage %); an expandable top-25 fee-drag table. Individual stocks are auto-treated as 0% ER. To extend coverage for a missing fund, add it to `app/expense_ratio_map.rb` with the ratio from the prospectus.
+
+### Retirement planning sub-page
+
+The full retirement projection lives at **`/portfolio/retirement`** (linked as a "See full projection & verdict →" button from the compact preview tile on `/portfolio`). The sub-page combines three things:
+
+1. **Retirement progress** — years remaining, current value, real + nominal target, required nominal/real CAGR.
+2. **Retirement spending — is it sustainable?** — only when `monthly_retirement_spending` is set. Shows monthly target, sustainable (perpetual) monthly rate, withdrawal rate, and years portfolio lasts.
+3. **Verdict + caveats + cited sources** — both the progress verdict (on-track / tight / not on-track) and the spending verdict (perpetual / comfortable / thirty-year-safe / tight / underfunded) appear with prose summaries; sources open in new tabs.
+
+The page renders an empty-profile state with a clear "→ Set up your profile" call-to-action when the required fields aren't yet set.
+
+### Inflation-aware retirement target
+
+The retirement target you enter on the profile form is interpreted as **today's dollars** (real terms). The new `inflation_assumption_rate` field (default 2.5%) drives a parallel **nominal** target (real × `(1+inflation)^years`). The retirement progress card on `/portfolio` shows both required CAGRs — real and nominal — and the verdict uses the nominal because that's the rate the portfolio actually has to clear. Default 2.5% is the Fed's long-run target; FRED PCEPI is cited inline as the reference source.
+
+### Retirement spending — is it sustainable?
+
+Once you set `monthly_retirement_spending` (in today's dollars) on the profile form, `/portfolio` adds a "Retirement spending — is it sustainable?" sub-section under the retirement-progress cards. Four cards: your monthly target, the **sustainable monthly** rate (the perpetual amount your portfolio's earnings can cover at the configured `post_retirement_real_return`, default 4%), the implied withdrawal rate, and **years until depletion**. The verdict reads one of:
+
+- *Sustainable indefinitely* — withdrawal at or below earnings; principal stays intact.
+- *Comfortably funded* — portfolio lasts 40+ years.
+- *Covers a typical 30-year retirement* — at the 4% rule horizon.
+- *Tight margin* — 25–30 years; little room for sequence-of-returns shocks.
+- *Underfunded* — 15–25 years; meaningful chance of running out.
+- *Severely underfunded* — under 15 years.
+
+The math is real-terms (today's dollars throughout), using the standard annuity-depletion formula, with proper handling of zero / negative real returns and the perpetual-withdrawal boundary case. Citation added: the Bogleheads SWR wiki (Trinity-study summary, 4% rule) — opens in a new tab from the retirement section.
 
 ### Retirement progress on /portfolio
 

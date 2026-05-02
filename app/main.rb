@@ -423,6 +423,8 @@ class TMoneyTerminal < Sinatra::Base
     )
     @movers     = PortfolioHistory.movers(top_n: 5, source: 'fidelity')
     @allocation = PortfolioHistory.allocation_breakdown(source: 'fidelity')
+    @account_breakdown = PortfolioHistory.account_breakdown(source: 'fidelity')
+    @expense_audit     = PortfolioHistory.expense_ratio_audit(source: 'fidelity')
     erb :portfolio
   end
 
@@ -558,6 +560,23 @@ class TMoneyTerminal < Sinatra::Base
     diff.to_json
   end
 
+  # Retirement planning sub-page — projection (years remaining, required CAGR
+  # vs historical norms) + spending sustainability (sustainable monthly, years
+  # until depletion). Reads ProfileStore + the latest snapshot total / live
+  # PortfolioStore valuation. Cache-only.
+  get '/portfolio/retirement' do
+    profile  = ProfileStore.read
+    rows     = PortfolioStore.positions.map { |p| valuate_position(p) }
+    totals   = portfolio_totals(rows)
+    history  = PortfolioHistory.time_series(source: 'fidelity')
+    current_value = totals[:market_value].to_f
+    if current_value <= 0 && history.last
+      current_value = history.last[:total_value].to_f
+    end
+    @retirement = RetirementProjection.project(profile: profile, current_value: current_value)
+    erb :retirement
+  end
+
   # --- Tax-loss harvesting analysis ---
 
   # Sub-page under /portfolio. Identifies open lots with unrealised
@@ -598,14 +617,17 @@ class TMoneyTerminal < Sinatra::Base
   post '/profile' do
     begin
       ProfileStore.update(
-        current_age:             params['current_age'],
-        retirement_age:          params['retirement_age'],
-        risk_tolerance:          params['risk_tolerance'],
-        federal_ltcg_rate:       params['federal_ltcg_rate'],
-        federal_ordinary_rate:   params['federal_ordinary_rate'],
-        state_tax_rate:          params['state_tax_rate'],
-        niit_applies:            params['niit_applies'],
-        retirement_target_value: params['retirement_target_value']
+        current_age:                 params['current_age'],
+        retirement_age:              params['retirement_age'],
+        risk_tolerance:              params['risk_tolerance'],
+        federal_ltcg_rate:           params['federal_ltcg_rate'],
+        federal_ordinary_rate:       params['federal_ordinary_rate'],
+        state_tax_rate:              params['state_tax_rate'],
+        niit_applies:                params['niit_applies'],
+        retirement_target_value:     params['retirement_target_value'],
+        inflation_assumption_rate:   params['inflation_assumption_rate'],
+        monthly_retirement_spending: params['monthly_retirement_spending'],
+        post_retirement_real_return: params['post_retirement_real_return']
       )
       redirect (params['return_to'] || '/portfolio/tax-harvest'), 302
     rescue ArgumentError => e
