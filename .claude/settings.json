@@ -32,5 +32,9 @@
       "Bash(git diff*)",
       "Bash(until *)"
     ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "bash /Users/outten/src/t-money-terminal/scripts/statusline.sh"
   }
 }
