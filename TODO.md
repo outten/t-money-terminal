@@ -72,6 +72,18 @@
 - `/portfolio` summary cards split realized YTD by short vs long. `/trades` page shows holding-period badges + wash-sale warnings inline.
 - 22 new tests in [spec/tax_lot_spec.rb](spec/tax_lot_spec.rb).
 
+### [PR #13] — Underwater-streak on tax-harvest candidates + retirement progress on /portfolio
+- **`PortfolioHistory.underwater_streak(symbol)`** ([app/portfolio_history.rb](app/portfolio_history.rb)) — counts consecutive snapshots ending at the latest where `market_value < cost_value`, returning `{snapshots:, since:, days:, currently_underwater: true}` or nil. Per-symbol series now also carries `cost_value` so the check is canonical.
+- **Underwater column** on `/portfolio/tax-harvest` candidates table — surfaces the streak with a conviction-level badge (low/med/high based on snapshot count) plus "N days since YYYY-MM-DD." Distinguishes noise (red 3 days) from conviction (red 60+ days) at a glance, sharpening the harvest-vs-wait call.
+- **`TaxHarvester.analyse` / `.candidates`** now accept an optional `per_symbol_history:` argument; when provided, each candidate row gains a `:underwater` field. Wiring is preserved end-to-end through `GET /portfolio/tax-harvest` and `GET /api/portfolio/tax-harvest`.
+- **`RetirementProjection`** ([app/retirement_projection.rb](app/retirement_projection.rb)) — pure-math helper computing `required_annual_return` (CAGR from current → target over N years) plus a `project(profile:, current_value:)` bundle for the view (years remaining, current, target, gap, required CAGR, status: at_goal / short).
+- **Retirement progress section** on `/portfolio` — four cards (years remaining, current value, target, required annual return) hidden until `current_age` + `retirement_age` + `retirement_target_value` are all set in `ProfileStore`. Falls back to the latest snapshot value when `PortfolioStore` is empty so snapshot-only users still see it.
+- **Caveated verdict** under the cards — maps the required CAGR to one of `on_track_safe` / `on_track_balanced` / `tight_equity` / `not_on_track`, anchored to long-run nominal CAGRs from cited sources (NYU Stern Damodaran 1928–2023 dataset; Bogleheads historical returns wiki). Sources are linked with `target="_blank" rel="noopener noreferrer"` so they open in a new tab. Caveat block calls out that the verdict is directional, not a forecast (sequence of returns, fees, taxes, contributions, asset mix, inflation all unmodelled).
+- **`ProfileStore.retirement_target_value`** added (validated as non-negative float, partial-update semantics preserved). Profile config form on `/portfolio/tax-harvest` gains the input.
+- 6 new tests in [spec/retirement_projection_spec.rb](spec/retirement_projection_spec.rb) + 9 new in [spec/portfolio_history_spec.rb](spec/portfolio_history_spec.rb) (underwater streak edge cases) + 5 new in [spec/tax_harvest_spec.rb](spec/tax_harvest_spec.rb) (per_symbol_history wiring + retirement_target_value persistence).
+
+**Tests:** 453 examples, 0 failures across 17 spec files.
+
 ### [PR #12] — Portfolio value-over-time chart + per-position sparklines + Fidelity backfill
 - **PortfolioHistory** ([app/portfolio_history.rb](app/portfolio_history.rb)) — pivots `ImportSnapshotStore` snapshots into a total time series (date / total_value / total_cost / unrealized_pl / day-over-day delta) and a per-symbol time series for sparklines. Inline-SVG sparkline renderer (no JS dependency, green/red by direction).
 - **Value-over-time chart** at the top of `/portfolio` — Chart.js line chart of total portfolio value across every Fidelity snapshot, with hover tooltip showing date + total + Δ vs prior + unrealized P&L. Three summary cards (latest value, day-over-day change, unrealized P&L). Hidden until 2+ snapshots exist; single-snapshot empty state when only one.
@@ -80,7 +92,7 @@
 - **Backfill button** on `/portfolio` (with pending-CSV count) + POST `/portfolio/import/fidelity/backfill` route + `GET /api/portfolio/history` JSON peer.
 - 24 new tests in [spec/portfolio_history_spec.rb](spec/portfolio_history_spec.rb).
 
-**Tests:** 427 examples, 0 failures across 16 spec files.
+**Tests:** 427 examples, 0 failures across 16 spec files. (Superseded by PR #13 — see above.)
 
 ### [PR #11] — Tax-loss harvesting sub-page
 - **ProfileStore** ([app/profile_store.rb](app/profile_store.rb)) — single-user investment profile at `data/profile.json`. Fields: `current_age`, `retirement_age`, `risk_tolerance` (aggressive/moderate/conservative), `federal_ltcg_rate`, `federal_ordinary_rate`, optional `state_tax_rate`, `niit_applies`. Range-validated; mutex + atomic write.

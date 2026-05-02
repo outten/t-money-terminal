@@ -58,8 +58,9 @@ module PortfolioHistory
   end
 
   # Per-symbol time series. Returns a hash keyed by upcased symbol; each
-  # value is an array of {date:, market_value:, last_price:} sorted
-  # oldest-first. Use this for sparklines.
+  # value is an array of {date:, market_value:, cost_value:, last_price:}
+  # sorted oldest-first. Use this for sparklines and the underwater-streak
+  # check on tax-harvest candidates.
   def per_symbol_series(source: 'fidelity')
     snapshots = load_snapshots(source: source)
     out = Hash.new { |h, k| h[k] = [] }
@@ -70,6 +71,7 @@ module PortfolioHistory
         out[sym] << {
           date:         snap['file_date'],
           market_value: value_of(p).round(2),
+          cost_value:   cost_of(p).round(2),
           last_price:   (p['last_price'] || p[:last_price]).to_f
         }
       end
@@ -79,17 +81,67 @@ module PortfolioHistory
   end
 
   # Sparkline data for one symbol, oldest-first. Empty array when the
-  # symbol never appeared. Tiny slice of `per_symbol_series` for callers
-  # that only want one symbol.
+  # symbol never appeared.
   def series_for(symbol, source: 'fidelity')
     sym = symbol.to_s.upcase
     snapshots = load_snapshots(source: source)
     snapshots.flat_map { |snap|
       pos = Array(snap['positions']).find { |p| (p['symbol'] || p[:symbol]).to_s.upcase == sym }
       next [] unless pos
-      [{ date: snap['file_date'], market_value: value_of(pos).round(2),
-         last_price: (pos['last_price'] || pos[:last_price]).to_f }]
+      [{ date:         snap['file_date'],
+         market_value: value_of(pos).round(2),
+         cost_value:   cost_of(pos).round(2),
+         last_price:   (pos['last_price'] || pos[:last_price]).to_f }]
     }.sort_by { |r| r[:date].to_s }
+  end
+
+  # Number of consecutive snapshots ending at the latest one where this
+  # symbol's market_value was < cost_value. Returns nil if the symbol has
+  # no history or isn't currently underwater. Otherwise:
+  #   { snapshots: N, since: 'YYYY-MM-DD', days: Integer, currently_underwater: true }
+  #
+  # "Days" is calendar days from the start of the streak to today (NOT
+  # the days between snapshots — we want a number the user can intuit).
+  # Streak counts only consecutive underwater snapshots; one snapshot in
+  # the green breaks the streak.
+  def underwater_streak(symbol_or_series, source: 'fidelity')
+    series =
+      if symbol_or_series.is_a?(Array)
+        symbol_or_series
+      else
+        per_symbol_series(source: source)[symbol_or_series.to_s.upcase] || []
+      end
+    return nil if series.empty?
+
+    latest = series.last
+    return nil unless latest[:market_value].to_f < latest[:cost_value].to_f
+
+    streak = 0
+    streak_start_date = latest[:date]
+    series.reverse_each do |row|
+      break unless row[:market_value].to_f < row[:cost_value].to_f
+      streak += 1
+      streak_start_date = row[:date]
+    end
+
+    today = Date.today
+    streak_start = parse_date(streak_start_date) || today
+    days = (today - streak_start).to_i
+    days = 0 if days < 0
+
+    {
+      snapshots:            streak,
+      since:                streak_start_date,
+      days:                 days,
+      currently_underwater: true
+    }
+  end
+
+  def parse_date(raw)
+    return raw if raw.is_a?(Date)
+    Date.parse(raw.to_s)
+  rescue StandardError
+    nil
   end
 
   # Render a tiny inline SVG polyline for the per-position sparkline column.
