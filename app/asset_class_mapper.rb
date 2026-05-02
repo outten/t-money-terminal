@@ -183,6 +183,32 @@ module AssetClassMapper
     rows.sort_by { |r| -r[:value] }
   end
 
+  # True when the holding is an individual common stock or ADR (NOT a fund)
+  # — used by the expense-ratio audit to attribute a 0% drag to stock
+  # holdings so coverage % isn't misleadingly low. Detection is the same
+  # description-suffix match the classifier already uses for us_stocks /
+  # intl_stocks via ADR markers; we expose it as a discrete predicate here
+  # so callers don't have to re-implement the regex.
+  INDIVIDUAL_STOCK_RULES = [
+    # ADRs / foreign-company markers
+    /(SPON\s+ADS|ADS\s+EA\s+REP|AMERICAN\s+DEPOSITARY|\bADR\b|NY\s+REGISTRY|ISIN\s*#)/i,
+    # Standard US-listed-stock suffixes
+    /(COMMON\s+STOCK|\bCOM\s+NEW\b|\bCAP\s+STK\b|\bINC\s+COM\b|\bCORP\s+COM\b|CORPORATION\s+COM|\.COM\s+INC|HOLDINGS\s+INC|INCORPORATED|\bCOM\b)/i,
+    # Trailing entity-type words: INC / CORP / CO / PLC / LLC / LTD / NV / AG / SA / CL\s+[A-Z]
+    /(\bINC\b|\bCORP\b|\bCO\b|\bPLC\b|\bLLC\b|\bLTD\b)\s*(USD\d|CL\s+[A-Z]|CLASS\s+[A-Z]|COM\s+USD|SHS|ORD|NPV|$)/i
+  ].freeze
+
+  def individual_stock?(symbol:, description: nil)
+    sym = symbol.to_s.upcase
+    # Symbols we explicitly know are individual stocks.
+    explicit_stocks = %w[
+      NVDA AAPL MSFT GOOGL GOOG AMZN META AVGO JPM AMAT MU GE GEV KLAC XOM TSM SHEL
+    ].freeze
+    return true if explicit_stocks.include?(sym)
+    desc = description.to_s
+    INDIVIDUAL_STOCK_RULES.any? { |regex| desc.match?(regex) }
+  end
+
   # Human label for the UI (keeps the data layer's symbol stable, view layer
   # never needs to repeat the label-decoration logic).
   def class_label(klass)

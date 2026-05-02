@@ -1,6 +1,8 @@
 require 'date'
 require_relative 'import_snapshot_store'
 require_relative 'asset_class_mapper'
+require_relative 'account_classifier'
+require_relative 'expense_ratio_map'
 
 # PortfolioHistory — pivots ImportSnapshotStore snapshots into time series
 # for the value-over-time chart + per-position sparklines on /portfolio.
@@ -233,6 +235,146 @@ module PortfolioHistory
       rows:        rows,
       total_value: rows.sum { |r| r[:value] }.round(2),
       as_of:       latest['file_date']
+    }
+  end
+
+  # Account-type breakdown of the latest snapshot. Each position carries
+  # an `accounts` array (e.g. `["Individual - TOD"]` or
+  # `["ROTH IRA", "Individual - TOD"]` for the small fraction of holdings
+  # that span multiple accounts).
+  #
+  # When a position is in N accounts, we attribute 1/N of its market value
+  # to each account. That's an honest v1 approximation — the precise fix
+  # is to keep per-account rows in FidelityImporter, which would need a
+  # parser refactor. This affects ~0.4% of typical portfolios and is
+  # explicitly called out in the UI footer.
+  #
+  # Returns:
+  #   { rows: [{ account:, kind:, kind_label:, value:, pct:, count:,
+  #              top_holdings: [{symbol:, value:}, ...] }, ...],
+  #     total_value:, as_of:, multi_account_positions: N }
+  def account_breakdown(source: 'fidelity')
+    snapshots = load_snapshots(source: source)
+    return { rows: [], total_value: 0.0, as_of: nil, multi_account_positions: 0 } if snapshots.empty?
+    latest = snapshots.last
+
+    buckets       = Hash.new { |h, k| h[k] = { value: 0.0, count: 0, holdings: [] } }
+    total_value   = 0.0
+    multi_account = 0
+
+    Array(latest['positions']).each do |p|
+      val = (p['current_value'] || p[:current_value] ||
+             ((p['shares']||p[:shares]).to_f * (p['last_price']||p[:last_price]).to_f)).to_f
+      next if val <= 0
+      accts = Array(p['accounts'] || p[:accounts])
+      accts = ['Other / unclassified'] if accts.empty?
+      multi_account += 1 if accts.length > 1
+      slice = val / accts.length
+
+      accts.each do |a|
+        buckets[a][:value] += slice
+        buckets[a][:count] += 1
+        buckets[a][:holdings] << { symbol: (p['symbol'] || p[:symbol]).to_s, value: slice.round(2) }
+      end
+      total_value += val
+    end
+
+    rows = buckets.map do |account, data|
+      kind = AccountClassifier.classify(account)
+      sorted = data[:holdings].sort_by { |h| -h[:value] }
+      {
+        account:       account,
+        kind:          kind,
+        kind_label:    AccountClassifier.kind_label(kind),
+        value:         data[:value].round(2),
+        pct:           total_value.positive? ? (data[:value] / total_value).round(6) : 0.0,
+        count:         data[:count],
+        top_holdings:  sorted
+      }
+    end
+
+    {
+      rows:                    rows.sort_by { |r| -r[:value] },
+      total_value:             total_value.round(2),
+      as_of:                   latest['file_date'],
+      multi_account_positions: multi_account
+    }
+  end
+
+  # Expense-ratio audit of the latest snapshot. Joins each position to the
+  # curated `ExpenseRatioMap`; computes annual fee in $ for known funds;
+  # surfaces an "unknown" bucket so coverage gaps stay visible.
+  #
+  # Returns:
+  #   { rows: [{symbol:, description:, value:, expense_ratio:, annual_fee:}, ...]
+  #            sorted by annual_fee desc,
+  #     total_known_value:, total_known_fee:, weighted_avg_ratio:,
+  #     unknown: { count:, value: },
+  #     as_of: 'YYYY-MM-DD' }
+  #
+  # `weighted_avg_ratio` is computed across the KNOWN-ER subset only —
+  # mixing unknown ratios as zero would understate the drag.
+  def expense_ratio_audit(source: 'fidelity')
+    snapshots = load_snapshots(source: source)
+    return empty_audit if snapshots.empty?
+    latest = snapshots.last
+
+    known_rows    = []
+    unknown_value = 0.0
+    unknown_count = 0
+    total_known_value = 0.0
+    total_known_fee   = 0.0
+
+    Array(latest['positions']).each do |p|
+      sym  = (p['symbol'] || p[:symbol]).to_s.upcase
+      desc = (p['description'] || p[:description]).to_s
+      val  = (p['current_value'] || p[:current_value] ||
+             ((p['shares']||p[:shares]).to_f * (p['last_price']||p[:last_price]).to_f)).to_f
+      next if val <= 0
+      er = ExpenseRatioMap.for_symbol(sym)
+
+      # Individual stocks / ADRs have no fund management fee — treat as
+      # 0% ER (covered, $0 drag) so coverage % isn't artificially low.
+      # Only fall through to "unknown" for things we genuinely don't know
+      # how to classify (uncovered fund symbols, CUSIP placeholders, etc.).
+      if er.nil?
+        if AssetClassMapper.individual_stock?(symbol: sym, description: desc)
+          er = 0.0
+        else
+          unknown_value += val
+          unknown_count += 1
+          next
+        end
+      end
+
+      fee = (val * er).round(2)
+      total_known_value += val
+      total_known_fee   += fee
+      known_rows << {
+        symbol:        sym,
+        description:   desc,
+        value:         val.round(2),
+        expense_ratio: er,
+        annual_fee:    fee
+      }
+    end
+
+    weighted_avg = total_known_value.positive? ? (total_known_fee / total_known_value).round(6) : 0.0
+
+    {
+      rows:               known_rows.sort_by { |r| -r[:annual_fee] },
+      total_known_value:  total_known_value.round(2),
+      total_known_fee:    total_known_fee.round(2),
+      weighted_avg_ratio: weighted_avg,
+      unknown:            { count: unknown_count, value: unknown_value.round(2) },
+      as_of:              latest['file_date']
+    }
+  end
+
+  def empty_audit
+    {
+      rows: [], total_known_value: 0.0, total_known_fee: 0.0,
+      weighted_avg_ratio: 0.0, unknown: { count: 0, value: 0.0 }, as_of: nil
     }
   end
 

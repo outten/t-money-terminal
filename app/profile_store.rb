@@ -28,16 +28,29 @@ module ProfileStore
   RISK_TOLERANCES = %w[aggressive moderate conservative].freeze
 
   DEFAULTS = {
-    current_age:             nil,
-    retirement_age:          65,
-    risk_tolerance:          'moderate',
-    federal_ltcg_rate:       0.15,
-    federal_ordinary_rate:   0.22,
-    state_tax_rate:          nil,
-    niit_applies:            false,
-    retirement_target_value: nil  # Optional $ goal at retirement_age. Drives the
-                                  # /portfolio retirement-progress card + required-
-                                  # annual-return calc. nil = section hidden.
+    current_age:               nil,
+    retirement_age:            65,
+    risk_tolerance:            'moderate',
+    federal_ltcg_rate:         0.15,
+    federal_ordinary_rate:     0.22,
+    state_tax_rate:            nil,
+    niit_applies:              false,
+    retirement_target_value:   nil,   # Optional $ goal at retirement_age, in
+                                      # TODAY's dollars (real terms — see
+                                      # `inflation_assumption_rate`). Drives
+                                      # the /portfolio retirement-progress
+                                      # card; nil = section hidden.
+    inflation_assumption_rate: 0.025, # Long-run US inflation assumption used
+                                      # to convert the (real) target into the
+                                      # nominal value the user actually needs
+                                      # to reach. Default ≈ Fed long-run target.
+    monthly_retirement_spending: nil, # Optional. Today's-dollars monthly spend
+                                      # the user wants in retirement. Drives the
+                                      # /portfolio "is it sustainable / for how
+                                      # long?" verdict. nil = section hidden.
+    post_retirement_real_return: 0.04 # Real CAGR assumption during retirement
+                                      # (after inflation). 4% is the canonical
+                                      # SWR-study heuristic; configurable.
   }.freeze
 
   module_function
@@ -113,6 +126,21 @@ module ProfileStore
         f = Float(v) rescue nil
         raise ArgumentError, 'retirement_target_value must be a non-negative number' if f.nil? || f < 0
         out[key] = f.round(2)
+      when :inflation_assumption_rate
+        next if v.nil? || v.to_s.strip.empty?
+        f = Float(v) rescue nil
+        raise ArgumentError, 'inflation_assumption_rate must be 0..0.2 (decimal, not percent)' if f.nil? || !f.between?(0, 0.2)
+        out[key] = f.round(4)
+      when :monthly_retirement_spending
+        next if v.nil? || v.to_s.strip.empty?
+        f = Float(v) rescue nil
+        raise ArgumentError, 'monthly_retirement_spending must be a non-negative number' if f.nil? || f < 0
+        out[key] = f.round(2)
+      when :post_retirement_real_return
+        next if v.nil? || v.to_s.strip.empty?
+        f = Float(v) rescue nil
+        raise ArgumentError, 'post_retirement_real_return must be -0.05..0.20 (decimal, not percent)' if f.nil? || !f.between?(-0.05, 0.20)
+        out[key] = f.round(4)
       end
     end
 

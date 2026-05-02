@@ -1,0 +1,161 @@
+<h2>Retirement planning</h2>
+<p class="subtitle">
+  Years remaining, required CAGR, and "is the spending plan sustainable?" verdict — anchored to historical
+  norms (S&amp;P 500, 60/40, 10-yr Treasury) and Trinity-study safe-withdrawal-rate research.
+  <a href="/portfolio">← back to portfolio</a>
+</p>
+
+<% if @retirement.nil? %>
+  <section class="benchmark-section">
+    <h3>Configure your profile to see retirement projections</h3>
+    <p class="data-source">
+      The retirement-progress and spending-sustainability analysis kick in once you've set:
+    </p>
+    <ul style="margin-left: 1.4em">
+      <li><strong>Current age</strong> &amp; <strong>retirement age</strong> — drives "years remaining."</li>
+      <li><strong>Retirement target value</strong> (in today's dollars) — drives the required-CAGR verdict.</li>
+      <li><em>Optional but recommended:</em> <strong>monthly retirement spending</strong> + <strong>post-retirement real return</strong> — drives the "is it sustainable, and for how long?" sub-verdict.</li>
+    </ul>
+    <p>
+      All of these live on the profile form on
+      <a href="/portfolio/tax-harvest" class="btn-primary" style="display:inline-block; margin-top:8px">→ Set up your profile</a>
+    </p>
+  </section>
+<% else %>
+  <section class="benchmark-section">
+    <h3>
+      Retirement progress
+      <span class="muted" style="font-size:0.78rem; font-weight:normal">
+        &middot; <a href="/portfolio/tax-harvest">edit profile →</a>
+      </span>
+    </h3>
+    <div class="portfolio-summary">
+      <div class="summary-card">
+        <div class="summary-label">Years remaining</div>
+        <div class="summary-value mono"><%= @retirement[:years_remaining] %></div>
+        <div class="summary-sub muted">until retirement age</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Current value</div>
+        <div class="summary-value mono"><%= format_money(@retirement[:current_value]) %></div>
+        <div class="summary-sub muted">live or latest snapshot</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Target (today's $)</div>
+        <div class="summary-value mono"><%= format_money(@retirement[:target_real]) %></div>
+        <div class="summary-sub muted">
+          → <%= format_money(@retirement[:target_nominal]) %> nominal
+          <% if @retirement[:inflation_rate] && @retirement[:inflation_rate] > 0 %>
+            (@<%= format_percent(@retirement[:inflation_rate]) %> inflation)
+          <% end %>
+        </div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Required annual return</div>
+        <% if @retirement[:status] == 'at_goal' %>
+          <div class="summary-value mono positive">0.0%</div>
+          <div class="summary-sub muted">already at target</div>
+        <% elsif @retirement[:nominal_required_return] %>
+          <% rr = @retirement[:nominal_required_return] %>
+          <% rr_class = rr <= 0.05 ? 'positive' : (rr <= 0.10 ? '' : 'negative') %>
+          <div class="summary-value mono <%= rr_class %>"><%= format_percent(rr, digits: 2) %></div>
+          <div class="summary-sub muted">
+            nominal CAGR for <%= @retirement[:years_remaining] %>y
+            <% if @retirement[:real_required_return] %>
+              · real <%= format_percent(@retirement[:real_required_return], digits: 2) %>
+            <% end %>
+          </div>
+        <% else %>
+          <div class="summary-value mono">—</div>
+          <div class="summary-sub muted">missing inputs</div>
+        <% end %>
+      </div>
+    </div>
+    <% if @retirement[:spending] %>
+      <% sp = @retirement[:spending] %>
+      <h4 style="margin: 16px 0 8px 0; font-size: 1rem">Retirement spending — is it sustainable?</h4>
+      <div class="portfolio-summary">
+        <div class="summary-card">
+          <div class="summary-label">Monthly spend (today's $)</div>
+          <div class="summary-value mono"><%= format_money(sp[:monthly_target_real]) %></div>
+          <div class="summary-sub muted"><%= format_money(sp[:annual_target_real]) %>/yr</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">Sustainable monthly</div>
+          <div class="summary-value mono"><%= format_money(sp[:sustainable_monthly_real]) %></div>
+          <div class="summary-sub muted">@ <%= format_percent(sp[:post_retirement_real_return]) %> real return</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">Withdrawal rate</div>
+          <div class="summary-value mono <%=
+            sp[:withdrawal_rate] <= sp[:post_retirement_real_return] ? 'positive' :
+            (sp[:withdrawal_rate] <= 0.04 ? '' : 'negative') %>">
+            <%= format_percent(sp[:withdrawal_rate], digits: 2) %>
+          </div>
+          <div class="summary-sub muted">of target balance</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">Years portfolio lasts</div>
+          <% if sp[:years_portfolio_lasts].infinite? %>
+            <div class="summary-value mono positive">Indefinite</div>
+            <div class="summary-sub muted">earnings cover spending</div>
+          <% else %>
+            <% yrs = sp[:years_portfolio_lasts].round %>
+            <% yrs_class = yrs >= 30 ? 'positive' : (yrs >= 20 ? '' : 'negative') %>
+            <div class="summary-value mono <%= yrs_class %>"><%= yrs %> yrs</div>
+            <div class="summary-sub muted">at <%= format_percent(sp[:withdrawal_rate]) %> real withdrawal</div>
+          <% end %>
+        </div>
+      </div>
+
+      <%
+        sp_class =
+          case sp[:verdict]
+          when :perpetual, :comfortable, :thirty_year_safe then 'positive'
+          when :tight                                       then ''
+          else                                                   'negative'
+          end
+      %>
+      <p style="margin-top: 12px; padding: 10px 14px; border-left: 3px solid <%=
+                sp_class == 'positive' ? '#0a8a3a' : (sp_class == 'negative' ? '#b00020' : '#c08400') %>;
+                background: rgba(0,0,0,0.02); font-size: 0.92rem">
+        <strong class="<%= sp_class %>"><%= sp[:verdict_summary] %></strong>
+      </p>
+    <% else %>
+      <p class="data-source">
+        Set <strong>monthly retirement spending</strong> on the profile form to unlock the sustainability sub-verdict
+        (sustainable rate, withdrawal rate, years until depletion).
+        <a href="/portfolio/tax-harvest">→ edit profile</a>
+      </p>
+    <% end %>
+
+    <% if @retirement[:verdict_summary] %>
+      <%
+        verdict_class =
+          case @retirement[:verdict]
+          when :on_track_safe, :on_track_balanced, :at_goal then 'positive'
+          when :tight_equity                                then ''
+          else                                                   'negative'
+          end
+      %>
+      <p style="margin-top: 12px; padding: 10px 14px; border-left: 3px solid <%=
+                verdict_class == 'positive' ? '#0a8a3a' : (verdict_class == 'negative' ? '#b00020' : '#c08400') %>;
+                background: rgba(0,0,0,0.02); font-size: 0.92rem">
+        <strong class="<%= verdict_class %>"><%= @retirement[:verdict_summary] %></strong>
+      </p>
+      <p class="data-source">
+        <strong>Caveat.</strong> Verdict is a directional read against long-run historical CAGRs, not a forecast.
+        Real outcomes depend on sequence of returns, fees, taxes, contributions, and the actual asset mix you hold.
+        Reference benchmarks
+        <% @retirement[:benchmarks].each_with_index do |b, i| %>
+          <%= '· ' if i > 0 %><%= b[:label] %>: <strong><%= (b[:return] * 100).round(1) %>%</strong>
+        <% end %>.
+        Sources:
+        <% @retirement[:citations].each_with_index do |c, i| %>
+          <%= '· ' if i > 0 %><a href="<%= c[:url] %>" target="_blank" rel="noopener noreferrer"><%= c[:label] %></a>
+        <% end %>.
+        Adjust the target on the <a href="/portfolio/tax-harvest">tax-harvest profile form</a>.
+      </p>
+    <% end %>
+  </section>
+<% end %>

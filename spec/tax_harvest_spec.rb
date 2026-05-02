@@ -145,6 +145,48 @@ RSpec.describe 'ProfileStore + TaxHarvester + tax-harvest routes' do
       ProfileStore.update(retirement_target_value: '')
       expect(ProfileStore.read[:retirement_target_value]).to eq(1_000_000.0)
     end
+
+    it 'persists inflation_assumption_rate as a 4-decimal float' do
+      ProfileStore.update(inflation_assumption_rate: '0.025')
+      expect(ProfileStore.read[:inflation_assumption_rate]).to eq(0.025)
+    end
+
+    it 'rejects inflation_assumption_rate outside 0..0.2' do
+      expect { ProfileStore.update(inflation_assumption_rate: '-0.01') }.to raise_error(ArgumentError)
+      expect { ProfileStore.update(inflation_assumption_rate: '0.5')   }.to raise_error(ArgumentError)
+    end
+
+    it 'inflation_assumption_rate defaults to 0.025 when never set' do
+      expect(ProfileStore.read[:inflation_assumption_rate]).to eq(0.025)
+    end
+
+    it 'persists monthly_retirement_spending as a 2-decimal float' do
+      ProfileStore.update(monthly_retirement_spending: '10000')
+      expect(ProfileStore.read[:monthly_retirement_spending]).to eq(10_000.0)
+    end
+
+    it 'rejects negative monthly_retirement_spending' do
+      expect { ProfileStore.update(monthly_retirement_spending: '-1') }.to raise_error(ArgumentError)
+    end
+
+    it 'persists post_retirement_real_return as a 4-decimal float' do
+      ProfileStore.update(post_retirement_real_return: '0.04')
+      expect(ProfileStore.read[:post_retirement_real_return]).to eq(0.04)
+    end
+
+    it 'allows mildly negative post_retirement_real_return (e.g., -0.01) for stress-testing' do
+      ProfileStore.update(post_retirement_real_return: '-0.01')
+      expect(ProfileStore.read[:post_retirement_real_return]).to eq(-0.01)
+    end
+
+    it 'rejects post_retirement_real_return outside -0.05..0.20' do
+      expect { ProfileStore.update(post_retirement_real_return: '-0.10') }.to raise_error(ArgumentError)
+      expect { ProfileStore.update(post_retirement_real_return: '0.5')   }.to raise_error(ArgumentError)
+    end
+
+    it 'post_retirement_real_return defaults to 0.04 when never set' do
+      expect(ProfileStore.read[:post_retirement_real_return]).to eq(0.04)
+    end
   end
 
   # ===========================================================================
