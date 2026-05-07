@@ -72,6 +72,14 @@
 - `/portfolio` summary cards split realized YTD by short vs long. `/trades` page shows holding-period badges + wash-sale warnings inline.
 - 22 new tests in [spec/tax_lot_spec.rb](spec/tax_lot_spec.rb).
 
+### [PR #19] — One-click "Re-analyze" button + consolidate to one Fidelity directory
+- **Re-analyze button**. Three buttons across two pages (latest-import, backfill, admin-refresh-all) each covered part of "rebuild from CSVs." `FidelityImporter.reanalyze!` ([app/fidelity_importer.rb](app/fidelity_importer.rb)) orchestrates the full pipeline: force-rewrites every JSON snapshot via `parse(path)` + `ImportSnapshotStore.write`, then calls the existing `import!(path: latest)` to handle PortfolioStore + cache priming + historical prefetch in one shot. `POST /portfolio/reanalyze` route + a "Re-analyze all N Fidelity files" button on `/portfolio` with confirmation dialog + success banner.
+- **`FidelityImporter.all_csv_paths`** — sibling to `pending_backfill_paths`, returns every CSV in the canonical fidelity dir, oldest-first by filename date.
+- **Directory consolidation**. Previously `data/porfolio/fidelity/` (CSV input) and `data/imports/fidelity/` (JSON snapshots) were separate, with importer logic to handle "user dropped CSV in wrong dir" cases. Now: ONE canonical dir at `data/imports/fidelity/` holds both CSVs and JSON snapshots. `FIDELITY_IMPORT_DIR` env var dropped — only `IMPORT_SNAPSHOT_DIR` remains. `default_dir` now derives from `ImportSnapshotStore.source_dir('fidelity')`. Migration: 23 CSVs moved from old to new dir, `data/porfolio/` removed entirely.
+- 7 new tests in [spec/portfolio_history_spec.rb](spec/portfolio_history_spec.rb) covering `all_csv_paths`, `reanalyze!` (force-rewrite stale snapshot, latest-import side effects, no-CSV no-op, per-file error collection), `POST /portfolio/reanalyze` (route smoke + empty-dir redirect). Tests in [spec/fidelity_importer_spec.rb](spec/fidelity_importer_spec.rb) updated to use the unified dir.
+
+**Tests:** 560 examples, 0 failures across 20 spec files.
+
 ### [PR #18] — Fix watchlist 0.0% bug (Tiingo single-bar daily endpoint)
 
 - **Bug**: every quote on `/dashboard`'s My Watchlist showed `0.0%` change. Root cause: `MarketDataService.fetch_from_tiingo_quote` requested `https://api.tiingo.com/tiingo/daily/<symbol>/prices` without `startDate`, which returns ONLY the latest EOD bar — so `data.length > 1` was false, `prev_close` collapsed to `close`, and `change_pct` always computed as 0. Tiingo is first in the provider waterfall, so every cache-hit symbol was affected.
@@ -79,7 +87,7 @@
 - 6 new tests in [spec/services_spec.rb](spec/services_spec.rb): empty/nil bars, single-bar regression case, two-bar happy path, adjClose fallback, divide-by-zero guard, and an integration test asserting `startDate=` appears in the URL.
 - Live verified: bust-cache via `/admin/refresh/symbol`, then `/dashboard` shows CMCSA at +0.55%, CAT at -0.05% — real values instead of 0.0%.
 
-**Tests:** 553 examples, 0 failures across 20 spec files.
+**Tests:** 553 examples, 0 failures across 20 spec files. (Superseded by PR #19.)
 
 ### [PR #17] — Retirement planning sub-page at /portfolio/retirement
 

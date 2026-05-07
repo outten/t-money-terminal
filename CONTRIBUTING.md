@@ -43,7 +43,7 @@ per PR; we don't keep long-lived feature branches.
   `/api/portfolio`, or `valuate_position` / `annotate_portfolio_signals!`.
   Page renders MUST NOT fire providers — see [AGENTS.md → Caching architecture](AGENTS.md).
   The hard assertions live in [spec/portfolio_perf_spec.rb](spec/portfolio_perf_spec.rb).
-- Run `make test` early and often. Suite is currently 553 examples; new
+- Run `make test` early and often. Suite is currently 560 examples; new
   PRs typically add 10–30 examples.
 
 ## 3. Commit
@@ -69,7 +69,7 @@ state. (Most of those are in `.gitignore`, but stage explicitly anyway.)
 
 <blank line>
 
-Tests: <suite count, e.g. "553/0 (was 547)">.
+Tests: <suite count, e.g. "560/0 (was 553)">.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ```

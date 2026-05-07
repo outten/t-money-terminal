@@ -13,6 +13,15 @@
     historicals prefetching for <%= @import_prefetch %> symbol<%= @import_prefetch == 1 ? '' : 's' %>
     in the background (<a href="/admin/health">progress</a>)<% end %>.
   </div>
+<% elsif @reanalyzed_count && @reanalyzed_count > 0 %>
+  <div class="degradation-banner" role="status" style="background:#d1f0d1; color:#1d4620; border-color:#a3d8a3">
+    <strong>✓ Re-analyzed <%= @reanalyzed_count %> Fidelity file<%= @reanalyzed_count == 1 ? '' : 's' %></strong>
+    — every snapshot rebuilt from CSV; latest applied to PortfolioStore + quote cache; historical prefetch running for any new tickers.
+    <% if @reanalyze_errors && @reanalyze_errors > 0 %>
+      <strong style="color:#a02020">· <%= @reanalyze_errors %> failed to parse</strong>
+    <% end %>
+    Every section below now reflects the latest file.
+  </div>
 <% elsif @backfill_count && @backfill_count > 0 %>
   <div class="degradation-banner" role="status" style="background:#d1f0d1; color:#1d4620; border-color:#a3d8a3">
     <strong>✓ Backfilled <%= @backfill_count %> snapshot<%= @backfill_count == 1 ? '' : 's' %></strong>
@@ -34,7 +43,7 @@
       <% if @latest_fidelity %>
         Latest file: <code><%= File.basename(@latest_fidelity) %></code>
       <% else %>
-        Drop a <code>Portfolio_Positions_*.csv</code> in <code>data/porfolio/fidelity/</code> first.
+        Drop a <code>Portfolio_Positions_*.csv</code> in <code>data/imports/fidelity/</code> first.
       <% end %>
       <% if @latest_snapshot %>
         &middot; Last imported:
@@ -58,6 +67,19 @@
       </button>
       <span class="data-source">
         Found <%= @backfill_pending %> Fidelity CSV<%= @backfill_pending == 1 ? '' : 's' %> without a JSON snapshot — backfilling makes them appear in the value-over-time chart and per-position sparklines below. Won't touch your current portfolio.
+      </span>
+    </form>
+  <% end %>
+
+  <% if @csv_count && @csv_count > 0 %>
+    <form action="/portfolio/reanalyze" method="post" class="fidelity-import-form" style="margin-top: 10px">
+      <button type="submit" class="btn-primary"
+              style="background: #5a3d8a"
+              onclick="return confirm('Re-analyze all <%= @csv_count %> Fidelity file<%= @csv_count == 1 ? '' : 's' %>?\n\nThis will:\n  · force-rebuild every JSON snapshot from its CSV (overwrites stale ones)\n  · replace PortfolioStore lots from the latest file\n  · re-prime the quote cache with the latest broker prices\n  · kick off historical prefetch for any new tickers\n\nAll analysis sections below (movers, allocation, account types, expense audit, value chart) will reflect the latest file on the next render.');">
+        Re-analyze all <%= @csv_count %> Fidelity file<%= @csv_count == 1 ? '' : 's' %>
+      </button>
+      <span class="data-source">
+        Re-parses every Fidelity CSV (currently <%= @csv_count %>), applies the latest to your portfolio + quote cache, and triggers historical prefetch for new tickers.
       </span>
     </form>
   <% end %>
@@ -122,7 +144,7 @@
   <section class="benchmark-section" style="margin-top: 18px">
     <h3>Portfolio value over time</h3>
     <p class="data-source">
-      Only <strong>one snapshot</strong> on file (<%= @history_series.first[:date] %>) — at least two are needed for a trajectory. Drop more <code>Portfolio_Positions_*.csv</code> in <code>data/porfolio/fidelity/</code> and click the backfill button above.
+      Only <strong>one snapshot</strong> on file (<%= @history_series.first[:date] %>) — at least two are needed for a trajectory. Drop more <code>Portfolio_Positions_*.csv</code> in <code>data/imports/fidelity/</code> and click the backfill button above.
     </p>
   </section>
 <% end %>

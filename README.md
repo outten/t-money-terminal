@@ -54,6 +54,7 @@ TradingView [lightweight-charts](https://www.tradingview.com/lightweight-charts/
 - **Performance leaders & laggards** — `/portfolio` ranks the top 5 gainers and top 5 laggards across the snapshot window by **per-share price change** (not market-value change, which would conflate price action with the user's own buys/sells). Filters out positions whose share count drifted >5% between first and last snapshot — catches stock splits, big buys, and broker data quirks. Each row carries a 60×18 sparkline.
 - **Asset-class breakdown** ([AssetClassMapper](app/asset_class_mapper.rb)) — `/portfolio` classifies the latest snapshot's positions into US stocks / international stocks / target-date / bonds / balanced / real estate / commodities / cash / unmapped, with $ + %-of-portfolio and the top 3 holdings per class. Classification uses a hand-curated symbol map plus description-text heuristics (FIDELITY FREEDOM 2035 → target-date, ADS EA REP → international, etc.). The map covers ~96% of a real ~$2M Fidelity portfolio out of the box; the unmapped bucket is honestly reported so coverage gaps are visible.
 - **Account-type allocation** ([AccountClassifier](app/account_classifier.rb)) — `/portfolio` groups holdings by broker account name and normalizes each into a tax kind (taxable / Roth / traditional IRA / 401k-403b-457 / deferred annuity / HSA / other). Foundation for the planned Roth-conversion-window, RMD-projection, and tax-efficient-location features. Multi-account holdings are split evenly across accounts (a v1 approximation honestly disclosed in the UI).
+- **One-click re-analyze** — `/portfolio` shows a **"Re-analyze all N Fidelity files"** button that force-rebuilds every JSON snapshot from its CSV (catching same-name CSV updates that backfill skips), replaces PortfolioStore lots from the latest CSV, re-primes the quote cache with broker prices, and triggers the background historical prefetch — single button refresh of every analysis section from the source-of-truth CSVs.
 - **Expense-ratio audit** ([ExpenseRatioMap](app/expense_ratio_map.rb)) — `/portfolio` joins each position to a curated expense-ratio table (~70 popular ETFs and mutual funds + the user's specific top-by-value holdings + their 401(k)'s institutional-class CUSIPs), computes annual fee in $ per holding (`market_value × ER`), and surfaces the top 25 fee-drag positions plus weighted-average ER, total annual fee, and coverage %. Individual stocks are auto-treated as 0% ER so coverage isn't misleadingly low. Reports a 99%+ coverage on a real ~$2M Fidelity portfolio.
 - **Inflation-aware retirement target** — `retirement_target_value` is interpreted as TODAY's dollars (real), and the new `inflation_assumption_rate` profile field (default 2.5%) drives a parallel **nominal** target = real × `(1+inflation)^years`. `/portfolio` shows both required CAGRs (real + nominal); the verdict uses nominal because that's the rate the portfolio actually has to clear. Inflation cite added to the retirement source list (FRED PCEPI).
 - **Retirement spending sustainability** — `monthly_retirement_spending` (today's dollars) plus `post_retirement_real_return` (default 4%) drive a parallel "is it sustainable, and for how long?" verdict. Computes the sustainable monthly (perpetual) rate, the implied withdrawal rate, and **years until depletion** via the standard real-terms annuity formula `n = -ln(1 - r·B/W) / ln(1+r)` (with sensible handling for r ≤ 0 and the W ≤ r·B perpetual case). Verdict bands: `perpetual` / `comfortable` (≥40y) / `thirty_year_safe` (≥30y) / `tight` (≥25y) / `underfunded` (≥15y) / `severely_underfunded`. Citations include the Bogleheads SWR / Trinity-study summary.
@@ -63,7 +64,7 @@ TradingView [lightweight-charts](https://www.tradingview.com/lightweight-charts/
 
 ### Broker import (Fidelity)
 
-Drop a `Portfolio_Positions_<Mmm>-<DD>-<YYYY>.csv` in `data/porfolio/fidelity/` (Fidelity's typo, kept), click **Import latest Fidelity export** on `/portfolio`, and:
+Drop a `Portfolio_Positions_<Mmm>-<DD>-<YYYY>.csv` in `data/imports/fidelity/` (alongside the JSON snapshots), click **Import latest Fidelity export** on `/portfolio`, and:
 
 1. Lots in PortfolioStore are replaced with the broker's per-symbol average cost basis (manual entries for symbols *not* in the file are preserved)
 2. Unknown tickers register as `SymbolIndex` extensions so `/analysis/:symbol` resolves
@@ -155,7 +156,7 @@ See [CREDENTIALS.md](CREDENTIALS.md) for signup walkthroughs and the FMP free-ti
 ### Common tasks
 
 ```bash
-make test                        # RSpec suite (currently 553 examples)
+make test                        # RSpec suite (currently 560 examples)
 make refresh-cache               # Warm market-data cache for the universe
 make refresh-providers           # Warm FMP / FRED / News / Stooq caches
 make refresh-all                 # Both, in one shot — REGIONS ∪ portfolio ∪ watchlist
@@ -201,10 +202,10 @@ app/
 views/                        # ERB templates with shared layout
 public/                       # style.css, app.js (chart), features.js (search/watchlist/alerts/portfolio)
 scripts/                      # refresh_cache, refresh_providers, scheduler, check_alerts, cache_status
-spec/                         # RSpec — 553 examples across 20 spec files
+spec/                         # RSpec — 560 examples across 20 spec files
 data/cache/                   # Hierarchical disk cache
 data/imports/                 # Broker import snapshots (audit + drift)
-data/porfolio/fidelity/       # Drop your Fidelity Portfolio_Positions_*.csv here
+data/imports/fidelity/        # Drop your Fidelity Portfolio_Positions_*.csv here, alongside the JSON snapshots they produce
 .github/workflows/ci.yml      # GitHub Actions — RSpec + scripts syntax check on every PR
 ```
 

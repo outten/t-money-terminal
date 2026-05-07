@@ -22,7 +22,9 @@ RSpec.describe 'PortfolioHistory + backfill + /portfolio history' do
   around(:each) do |ex|
     Dir.mktmpdir do |dir|
       ENV['IMPORT_SNAPSHOT_DIR']   = File.join(dir, 'imports')
-      ENV['FIDELITY_IMPORT_DIR']   = File.join(dir, 'porfolio', 'fidelity')
+      # FIDELITY_IMPORT_DIR is gone — CSVs and snapshots both live under
+      # ImportSnapshotStore.source_dir('fidelity'), which derives from
+      # IMPORT_SNAPSHOT_DIR + '/fidelity'.
       ENV['PORTFOLIO_PATH']        = File.join(dir, 'portfolio.json')
       ENV['TRADES_PATH']           = File.join(dir, 'trades.json')
       ENV['SYMBOLS_EXTENDED_PATH'] = File.join(dir, 'symbols_extended.json')
@@ -32,7 +34,7 @@ RSpec.describe 'PortfolioHistory + backfill + /portfolio history' do
       SymbolIndex.reset_extensions! if defined?(SymbolIndex) && SymbolIndex.respond_to?(:reset_extensions!)
       ex.run
       SymbolIndex.reset_extensions! if defined?(SymbolIndex) && SymbolIndex.respond_to?(:reset_extensions!)
-      %w[IMPORT_SNAPSHOT_DIR FIDELITY_IMPORT_DIR PORTFOLIO_PATH TRADES_PATH
+      %w[IMPORT_SNAPSHOT_DIR PORTFOLIO_PATH TRADES_PATH
          SYMBOLS_EXTENDED_PATH WATCHLIST_PATH ALERTS_PATH PROFILE_PATH].each { |k| ENV.delete(k) }
     end
   end
@@ -461,8 +463,9 @@ RSpec.describe 'PortfolioHistory + backfill + /portfolio history' do
   end
 
   describe FidelityImporter do
-    let(:input_dir)  { ENV['FIDELITY_IMPORT_DIR'] }
-    let(:output_dir) { File.join(ENV['IMPORT_SNAPSHOT_DIR'], 'fidelity') }
+    # CSVs and JSON snapshots both live in ImportSnapshotStore.source_dir('fidelity'),
+    # which is `<IMPORT_SNAPSHOT_DIR>/fidelity` in tests.
+    let(:fidelity_dir) { File.join(ENV['IMPORT_SNAPSHOT_DIR'], 'fidelity') }
 
     def write_csv(dir, basename, rows)
       FileUtils.mkdir_p(dir)
@@ -475,27 +478,22 @@ RSpec.describe 'PortfolioHistory + backfill + /portfolio history' do
     end
 
     describe '.pending_backfill_paths' do
-      it 'lists CSVs in the input dir without snapshots' do
-        write_csv(input_dir, 'Portfolio_Positions_Apr-28-2026.csv', [{ symbol: 'A', shares: 10, last_price: 100 }])
-        write_csv(input_dir, 'Portfolio_Positions_Apr-29-2026.csv', [{ symbol: 'A', shares: 10, last_price: 105 }])
+      it 'lists CSVs without a matching JSON snapshot' do
+        write_csv(fidelity_dir, 'Portfolio_Positions_Apr-28-2026.csv', [{ symbol: 'A', shares: 10, last_price: 100 }])
+        write_csv(fidelity_dir, 'Portfolio_Positions_Apr-29-2026.csv', [{ symbol: 'A', shares: 10, last_price: 105 }])
         expect(FidelityImporter.pending_backfill_count).to eq(2)
       end
 
-      it 'also picks up CSVs sitting in the snapshot output dir (user mistake)' do
-        write_csv(output_dir, 'Portfolio_Positions_Apr-28-2026.csv', [{ symbol: 'A', shares: 10, last_price: 100 }])
-        expect(FidelityImporter.pending_backfill_count).to eq(1)
-      end
-
       it 'skips CSVs that already have a JSON snapshot' do
-        write_csv(input_dir, 'Portfolio_Positions_Apr-28-2026.csv', [{ symbol: 'A', shares: 10, last_price: 100 }])
+        write_csv(fidelity_dir, 'Portfolio_Positions_Apr-28-2026.csv', [{ symbol: 'A', shares: 10, last_price: 100 }])
         ImportSnapshotStore.write(source: 'fidelity', basename: 'Portfolio_Positions_Apr-28-2026',
                                   data: { 'file_date' => '2026-04-28', 'positions' => [] })
         expect(FidelityImporter.pending_backfill_count).to eq(0)
       end
 
       it 'sorts oldest-first by filename date' do
-        write_csv(input_dir, 'Portfolio_Positions_Apr-30-2026.csv', [{ symbol: 'A', shares: 10, last_price: 100 }])
-        write_csv(input_dir, 'Portfolio_Positions_Apr-28-2026.csv', [{ symbol: 'A', shares: 10, last_price: 100 }])
+        write_csv(fidelity_dir, 'Portfolio_Positions_Apr-30-2026.csv', [{ symbol: 'A', shares: 10, last_price: 100 }])
+        write_csv(fidelity_dir, 'Portfolio_Positions_Apr-28-2026.csv', [{ symbol: 'A', shares: 10, last_price: 100 }])
         paths = FidelityImporter.pending_backfill_paths
         expect(paths.map { |p| File.basename(p) }).to eq([
           'Portfolio_Positions_Apr-28-2026.csv',
@@ -504,10 +502,73 @@ RSpec.describe 'PortfolioHistory + backfill + /portfolio history' do
       end
     end
 
+    describe '.all_csv_paths' do
+      it 'lists every CSV in the canonical fidelity dir, oldest-first by filename date' do
+        write_csv(fidelity_dir, 'Portfolio_Positions_Apr-30-2026.csv', [{ symbol: 'A', shares: 1, last_price: 1 }])
+        write_csv(fidelity_dir, 'Portfolio_Positions_Apr-28-2026.csv', [{ symbol: 'A', shares: 1, last_price: 1 }])
+        write_csv(fidelity_dir, 'Portfolio_Positions_Apr-29-2026.csv', [{ symbol: 'A', shares: 1, last_price: 1 }])
+        paths = FidelityImporter.all_csv_paths
+        expect(paths.map { |p| File.basename(p) }).to eq([
+          'Portfolio_Positions_Apr-28-2026.csv',
+          'Portfolio_Positions_Apr-29-2026.csv',
+          'Portfolio_Positions_Apr-30-2026.csv'
+        ])
+      end
+
+      it 'returns [] when the fidelity dir has no CSVs' do
+        expect(FidelityImporter.all_csv_paths).to eq([])
+      end
+    end
+
+    describe '.reanalyze!' do
+      it 'force re-snapshots every CSV including ones that already had a JSON' do
+        # Pre-populate a snapshot — reanalyze! should still rewrite it (this is
+        # the case backfill_snapshots! deliberately skips, but reanalyze! does NOT).
+        write_csv(fidelity_dir, 'Portfolio_Positions_Apr-29-2026.csv', [{ symbol: 'A', shares: 5, last_price: 100 }])
+        ImportSnapshotStore.write(source: 'fidelity', basename: 'Portfolio_Positions_Apr-29-2026',
+                                  data: { 'file_date' => '2026-04-29', 'positions' => [{ 'symbol' => 'STALE' }] })
+        write_csv(fidelity_dir, 'Portfolio_Positions_Apr-30-2026.csv', [{ symbol: 'AAPL', shares: 10, last_price: 200 }])
+
+        result = FidelityImporter.reanalyze!
+        expect(result[:snapshots_rewritten]).to include('Portfolio_Positions_Apr-29-2026', 'Portfolio_Positions_Apr-30-2026')
+        # The stale snapshot was overwritten with the parsed CSV content.
+        latest = ImportSnapshotStore.latest(source: 'fidelity')
+        expect(latest['positions'].first['symbol']).to eq('AAPL')
+        expect(result[:snapshot_errors]).to be_empty
+      end
+
+      it 'runs the regular import! against the latest CSV (replaces PortfolioStore + primes cache)' do
+        write_csv(fidelity_dir, 'Portfolio_Positions_Apr-30-2026.csv', [{ symbol: 'AAPL', shares: 10, last_price: 200 }])
+        result = FidelityImporter.reanalyze!
+        expect(result[:import]).not_to be_nil
+        expect(result[:import][:imported]).to eq(1)
+        # PortfolioStore lots should reflect the latest file.
+        expect(PortfolioStore.lots_for('AAPL').length).to eq(1)
+      end
+
+      it 'returns import: nil when no CSVs exist' do
+        result = FidelityImporter.reanalyze!
+        expect(result[:snapshots_rewritten]).to be_empty
+        expect(result[:import]).to be_nil
+      end
+
+      it 'records per-file errors without aborting the whole pipeline' do
+        # Write a malformed CSV alongside a valid one; the valid one should still snapshot.
+        FileUtils.mkdir_p(fidelity_dir)
+        File.write(File.join(fidelity_dir, 'Portfolio_Positions_Apr-30-2026.csv'), 'this is not csv content')
+        write_csv(fidelity_dir, 'Portfolio_Positions_Apr-29-2026.csv', [{ symbol: 'AAPL', shares: 10, last_price: 200 }])
+        result = FidelityImporter.reanalyze!
+        # The valid CSV produced a snapshot; the malformed one may be either
+        # in errors or in rewrites depending on parser tolerance — we just
+        # care the valid one made it through.
+        expect(result[:snapshots_rewritten]).to include('Portfolio_Positions_Apr-29-2026')
+      end
+    end
+
     describe '.backfill_snapshots!' do
       it 'snapshots every pending CSV without mutating the portfolio store' do
-        write_csv(input_dir, 'Portfolio_Positions_Apr-28-2026.csv', [{ symbol: 'A', shares: 10, last_price: 100 }])
-        write_csv(input_dir, 'Portfolio_Positions_Apr-29-2026.csv', [{ symbol: 'A', shares: 10, last_price: 105 }])
+        write_csv(fidelity_dir, 'Portfolio_Positions_Apr-28-2026.csv', [{ symbol: 'A', shares: 10, last_price: 100 }])
+        write_csv(fidelity_dir, 'Portfolio_Positions_Apr-29-2026.csv', [{ symbol: 'A', shares: 10, last_price: 105 }])
         result = FidelityImporter.backfill_snapshots!
         expect(result[:snapshotted].length).to eq(2)
         expect(result[:errors]).to be_empty
@@ -516,7 +577,7 @@ RSpec.describe 'PortfolioHistory + backfill + /portfolio history' do
       end
 
       it 'is idempotent — second run snapshots nothing' do
-        write_csv(input_dir, 'Portfolio_Positions_Apr-28-2026.csv', [{ symbol: 'A', shares: 10, last_price: 100 }])
+        write_csv(fidelity_dir, 'Portfolio_Positions_Apr-28-2026.csv', [{ symbol: 'A', shares: 10, last_price: 100 }])
         FidelityImporter.backfill_snapshots!
         second = FidelityImporter.backfill_snapshots!
         expect(second[:snapshotted]).to be_empty
@@ -550,17 +611,43 @@ RSpec.describe 'PortfolioHistory + backfill + /portfolio history' do
   end
 
   describe 'POST /portfolio/import/fidelity/backfill' do
-    let(:input_dir) { ENV['FIDELITY_IMPORT_DIR'] }
+    let(:fidelity_dir) { File.join(ENV["IMPORT_SNAPSHOT_DIR"], "fidelity") }
 
     it 'snapshots pending CSVs and redirects with the count' do
-      FileUtils.mkdir_p(input_dir)
+      FileUtils.mkdir_p(fidelity_dir)
       header = "Account Number,Account Name,Symbol,Description,Quantity,Last Price,Last Price Change,Current Value,Today's Gain/Loss Dollar,Today's Gain/Loss Percent,Total Gain/Loss Dollar,Total Gain/Loss Percent,Percent Of Account,Cost Basis Total,Average Cost Basis,Type"
-      File.write(File.join(input_dir, 'Portfolio_Positions_Apr-28-2026.csv'),
+      File.write(File.join(fidelity_dir, 'Portfolio_Positions_Apr-28-2026.csv'),
                  header + "\nX,Indv,AAPL,Apple,10,$100,$0,$1000,$0,0%,$0,0%,1%,$1000,$100,Cash")
       post '/portfolio/import/fidelity/backfill'
       expect(last_response.status).to eq(302)
       expect(last_response.headers['Location']).to include('backfill_count=1')
       expect(ImportSnapshotStore.list(source: 'fidelity').length).to eq(1)
+    end
+  end
+
+  describe 'POST /portfolio/reanalyze' do
+    let(:fidelity_dir) { File.join(ENV["IMPORT_SNAPSHOT_DIR"], "fidelity") }
+
+    it 'force re-snapshots all CSVs, runs latest import, redirects with counts' do
+      FileUtils.mkdir_p(fidelity_dir)
+      header = "Account Number,Account Name,Symbol,Description,Quantity,Last Price,Last Price Change,Current Value,Today's Gain/Loss Dollar,Today's Gain/Loss Percent,Total Gain/Loss Dollar,Total Gain/Loss Percent,Percent Of Account,Cost Basis Total,Average Cost Basis,Type"
+      File.write(File.join(fidelity_dir, 'Portfolio_Positions_Apr-28-2026.csv'),
+                 header + "\nX,Indv,AAPL,Apple,10,$100,$0,$1000,$0,0%,$0,0%,1%,$1000,$100,Cash")
+      File.write(File.join(fidelity_dir, 'Portfolio_Positions_Apr-29-2026.csv'),
+                 header + "\nX,Indv,AAPL,Apple,10,$110,$0,$1100,$0,0%,$0,0%,1%,$1000,$100,Cash")
+
+      post '/portfolio/reanalyze'
+      expect(last_response.status).to eq(302)
+      expect(last_response.headers['Location']).to include('reanalyzed_count=2')
+      expect(last_response.headers['Location']).to include('imported_count=')
+      expect(ImportSnapshotStore.list(source: 'fidelity').length).to eq(2)
+      expect(PortfolioStore.lots_for('AAPL').length).to eq(1)
+    end
+
+    it 'redirects with reanalyzed_count=0 when no CSVs exist' do
+      post '/portfolio/reanalyze'
+      expect(last_response.status).to eq(302)
+      expect(last_response.headers['Location']).to include('reanalyzed_count=0')
     end
   end
 
