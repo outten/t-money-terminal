@@ -27,18 +27,18 @@ RSpec.describe 'Fidelity broker import' do
       ENV['TRADES_PATH']           = File.join(dir, 'trades.json')
       ENV['SYMBOLS_EXTENDED_PATH'] = File.join(dir, 'symbols_extended.json')
 
-      # Point the importer at a temp dir we control, populated with the
-      # fixture (and a couple of older files to test latest-file detection).
-      ENV['FIDELITY_IMPORT_DIR']   = File.join(dir, 'fidelity')
+      # Point the importer at a temp dir we control. CSVs and snapshots
+      # both live in `<IMPORT_SNAPSHOT_DIR>/fidelity/` post-consolidation.
       ENV['IMPORT_SNAPSHOT_DIR']   = File.join(dir, 'imports')
-      FileUtils.mkdir_p(ENV['FIDELITY_IMPORT_DIR'])
-      FileUtils.cp(FIXTURE_PATH, ENV['FIDELITY_IMPORT_DIR'])
+      fidelity_dir                 = File.join(ENV['IMPORT_SNAPSHOT_DIR'], 'fidelity')
+      FileUtils.mkdir_p(fidelity_dir)
+      FileUtils.cp(FIXTURE_PATH, fidelity_dir)
 
       SymbolIndex.reset_extensions!
       ex.run
       SymbolIndex.reset_extensions!
       %w[WATCHLIST_PATH ALERTS_PATH ALERTS_LOG_PATH PORTFOLIO_PATH TRADES_PATH
-         SYMBOLS_EXTENDED_PATH FIDELITY_IMPORT_DIR IMPORT_SNAPSHOT_DIR].each { |k| ENV.delete(k) }
+         SYMBOLS_EXTENDED_PATH IMPORT_SNAPSHOT_DIR].each { |k| ENV.delete(k) }
     end
   end
 
@@ -71,7 +71,7 @@ RSpec.describe 'Fidelity broker import' do
 
   describe 'FidelityImporter.latest_file_in' do
     it 'picks the newest file by date in filename' do
-      dir = ENV['FIDELITY_IMPORT_DIR']
+      dir = File.join(ENV['IMPORT_SNAPSHOT_DIR'], 'fidelity')
       FileUtils.cp(FIXTURE_PATH, File.join(dir, 'Portfolio_Positions_Mar-15-2026.csv'))
       latest = FidelityImporter.latest_file_in(dir)
       expect(File.basename(latest)).to eq('Portfolio_Positions_Apr-29-2026.csv')
@@ -181,7 +181,7 @@ RSpec.describe 'Fidelity broker import' do
     end
 
     it 'raises when no Fidelity CSV is present' do
-      FileUtils.rm_rf(ENV['FIDELITY_IMPORT_DIR'])
+      FileUtils.rm_rf(File.join(ENV['IMPORT_SNAPSHOT_DIR'], 'fidelity'))
       expect { FidelityImporter.import! }.to raise_error(/No Fidelity CSV/)
     end
   end
@@ -199,7 +199,7 @@ RSpec.describe 'Fidelity broker import' do
     end
 
     it 'redirects with imported_error= when no CSV is found' do
-      FileUtils.rm_rf(ENV['FIDELITY_IMPORT_DIR'])
+      FileUtils.rm_rf(File.join(ENV['IMPORT_SNAPSHOT_DIR'], 'fidelity'))
       post '/portfolio/import/fidelity'
       expect(last_response.status).to eq(302)
       expect(last_response.location).to include('imported_error=')
@@ -237,7 +237,7 @@ RSpec.describe 'Fidelity broker import' do
     end
 
     it '404s when no CSV exists' do
-      FileUtils.rm_rf(ENV['FIDELITY_IMPORT_DIR'])
+      FileUtils.rm_rf(File.join(ENV['IMPORT_SNAPSHOT_DIR'], 'fidelity'))
       get '/api/portfolio/import/fidelity/preview'
       expect(last_response.status).to eq(404)
     end

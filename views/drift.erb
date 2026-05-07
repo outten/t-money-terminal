@@ -4,7 +4,7 @@
 <% if @diff.nil? %>
   <div class="notice">
     <% if @snapshots.empty? %>
-      No broker imports yet. Drop a Fidelity CSV in <code>data/porfolio/fidelity/</code> and click
+      No broker imports yet. Drop a Fidelity CSV in <code>data/imports/fidelity/</code> and click
       <strong>Import latest Fidelity export</strong> on <a href="/portfolio">/portfolio</a>.
     <% else %>
       Only one snapshot exists (<%= @snapshots.first[:basename] %>). Drift comparison needs two —

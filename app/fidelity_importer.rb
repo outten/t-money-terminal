@@ -10,10 +10,11 @@ require_relative 'historical_prefetcher'
 # FidelityImporter — parse a Fidelity Portfolio_Positions CSV and reconcile
 # it into PortfolioStore.
 #
-# Drop a daily export at `data/porfolio/fidelity/Portfolio_Positions_<Mmm>-<DD>-<YYYY>.csv`
-# (the directory name's spelled with the typo Fidelity ships) and call
-# `FidelityImporter.import!` — by default it imports the newest file in that
-# directory.
+# Drop daily exports at `data/imports/fidelity/Portfolio_Positions_<Mmm>-<DD>-<YYYY>.csv`
+# alongside the JSON snapshots they produce — one canonical directory for
+# both raw input and parsed output. Call `FidelityImporter.import!` to
+# import the newest file, or `reanalyze!` to rebuild every snapshot from
+# scratch.
 #
 # Behaviour
 # ---------
@@ -31,15 +32,17 @@ require_relative 'historical_prefetcher'
 #   aggregated to a single position with weighted-average cost basis. The
 #   accounts each symbol appears in are recorded in :accounts.
 module FidelityImporter
-  DEFAULT_DIR  = File.expand_path('../../data/porfolio/fidelity', __FILE__)
   FILE_PATTERN = /\APortfolio_Positions_(\w{3})-(\d{2})-(\d{4})\.csv\z/.freeze
   MONTH_INDEX  = %w[Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec]
                    .each_with_index.to_h { |m, i| [m, i + 1] }.freeze
 
   module_function
 
+  # Canonical directory holding both Fidelity CSV inputs AND the JSON
+  # snapshots they produce. Same path the snapshot store writes to —
+  # one directory for fidelity-source data, full stop.
   def default_dir
-    ENV['FIDELITY_IMPORT_DIR'] || DEFAULT_DIR
+    ImportSnapshotStore.source_dir('fidelity')
   end
 
   # Newest CSV in `dir` by filename date, falling back to mtime.
@@ -279,9 +282,8 @@ module FidelityImporter
   #   - Only writes snapshots so `/portfolio` can render a value-over-time
   #     chart and per-position sparklines from the snapshot history.
   #
-  # We scan the canonical input dir (`data/porfolio/fidelity/`) AND the
-  # snapshot output dir (`data/imports/fidelity/`) — users sometimes drop
-  # CSVs into the output dir by mistake; rather than fail, we pick them up.
+  # CSVs and snapshots both live in `data/imports/fidelity/` — one
+  # canonical dir for fidelity-source data.
   #
   # Returns:
   #   { snapshotted: [basename, ...], skipped_existing: [basename, ...],
@@ -305,21 +307,75 @@ module FidelityImporter
     out
   end
 
-  # CSVs in either the input or the output dir that don't yet have a JSON
+  # CSVs in the canonical fidelity dir that don't yet have a matching JSON
   # snapshot. Used by `backfill_snapshots!` and the /portfolio button.
   def pending_backfill_paths
-    candidate_dirs = [default_dir, ImportSnapshotStore.source_dir('fidelity')].uniq
-    snapshot_basenames = Dir.glob(File.join(ImportSnapshotStore.source_dir('fidelity'), '*.json'))
+    snapshot_basenames = Dir.glob(File.join(default_dir, '*.json'))
                             .map { |p| File.basename(p, '.json') }
-                            .to_set
-
-    candidate_dirs.flat_map { |dir|
-      next [] unless Dir.exist?(dir)
-      Dir.glob(File.join(dir, '*.csv')).reject { |p| snapshot_basenames.include?(File.basename(p, '.csv')) }
-    }.uniq.sort_by { |p| extract_date_from_filename(p) || Date.new(0) }
+    snapshot_basenames = snapshot_basenames.to_set
+    all_csv_paths.reject { |p| snapshot_basenames.include?(File.basename(p, '.csv')) }
   end
 
   def pending_backfill_count
     pending_backfill_paths.length
+  end
+
+  # End-to-end re-analysis. One-button "rebuild everything from the
+  # source-of-truth Fidelity CSVs":
+  #
+  #   1. FORCE re-snapshot every CSV in either dir, even ones that already
+  #      have a JSON snapshot (covers the case where Fidelity re-issued a
+  #      corrected file with the same basename — backfill skips those).
+  #   2. Run the regular `import!` against the latest CSV. That replaces
+  #      PortfolioStore lots, primes the quote cache from broker prices,
+  #      and kicks off the background historical prefetch for any new
+  #      tickers.
+  #
+  # After this, every /portfolio section that reads from snapshots
+  # (value-over-time chart, per-position sparklines, performance leaders/
+  # laggards, asset-class breakdown, account-type allocation, expense-
+  # ratio audit) is on the latest data, and every section that reads from
+  # PortfolioStore + the quote cache (positions table, retirement
+  # projection, tax-harvest analysis) is on the latest valuation.
+  #
+  # Returns:
+  #   { snapshots_rewritten: [basename, ...],
+  #     snapshot_errors:     [{path:, error:}, ...],
+  #     import:              <import! summary or nil if no CSVs found> }
+  def reanalyze!
+    out = {
+      snapshots_rewritten: [],
+      snapshot_errors:     [],
+      import:              nil
+    }
+
+    all_csv_paths.each do |path|
+      basename = File.basename(path, '.csv')
+      begin
+        parsed = parse(path)
+        ImportSnapshotStore.write(
+          source:   'fidelity',
+          basename: basename,
+          data:     parsed
+        )
+        out[:snapshots_rewritten] << basename
+      rescue StandardError => e
+        out[:snapshot_errors] << { path: path, error: "#{e.class}: #{e.message}" }
+      end
+    end
+
+    latest = latest_file_in
+    out[:import] = import!(path: latest) if latest
+
+    out
+  end
+
+  # Every Fidelity CSV in the canonical fidelity dir, oldest-first by
+  # filename date. Used by `reanalyze!` to rebuild every snapshot from
+  # scratch.
+  def all_csv_paths
+    return [] unless Dir.exist?(default_dir)
+    Dir.glob(File.join(default_dir, '*.csv'))
+       .sort_by { |p| extract_date_from_filename(p) || Date.new(0) }
   end
 end

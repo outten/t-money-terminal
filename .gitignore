@@ -11,5 +11,4 @@ data/profile.json
 data/trades.json
 data/symbols_extended.json
 data/scheduler*.log
-data/porfolio/fidelity/*
 data/imports/

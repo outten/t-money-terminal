@@ -408,6 +408,9 @@ class TMoneyTerminal < Sinatra::Base
     @backfill_pending = FidelityImporter.pending_backfill_count
     @backfill_count   = params['backfill_count']&.to_i
     @backfill_errors  = params['backfill_errors']&.to_i
+    @reanalyzed_count = params['reanalyzed_count']&.to_i
+    @reanalyze_errors = params['reanalyze_errors']&.to_i
+    @csv_count        = FidelityImporter.all_csv_paths.length
     @history_series   = PortfolioHistory.time_series(source: 'fidelity')
     @history_per_sym  = PortfolioHistory.per_symbol_series(source: 'fidelity')
     # Retirement projection — uses live @totals if PortfolioStore has positions,
@@ -648,11 +651,34 @@ class TMoneyTerminal < Sinatra::Base
 
   # --- Fidelity broker import ---
 
-  # One-click import of the newest CSV in data/porfolio/fidelity/. Replaces
+  # One-click import of the newest CSV in data/imports/fidelity/. Replaces
   # PortfolioStore lots for every symbol the file contains (file is
   # authoritative), registers unknown tickers as SymbolIndex extensions, and
   # primes the quote cache with the file's Last Price so the page renders
   # fast even when live providers are throttled.
+  # End-to-end re-analyze pipeline triggered from /portfolio. Rebuilds every
+  # snapshot from the CSVs in `data/imports/fidelity/` (force-overwriting
+  # any stale JSON), then runs the regular import! on the latest CSV so
+  # PortfolioStore + the quote cache + the background historical prefetch
+  # all refresh in one shot. Page sections that read from snapshots
+  # (movers, allocation, account, expense audit, value-over-time chart,
+  # per-position sparklines) automatically pick up the new data on the
+  # next render.
+  post '/portfolio/reanalyze' do
+    begin
+      result = FidelityImporter.reanalyze!
+      qs = "reanalyzed_count=#{result[:snapshots_rewritten].length}" \
+           "&reanalyze_errors=#{result[:snapshot_errors].length}"
+      qs += "&imported_count=#{result[:import][:imported]}" if result[:import]
+      qs += "&imported_file=#{result[:import][:file_date]&.iso8601}" if result[:import] && result[:import][:file_date]
+      qs += "&prefetch_started=#{result[:import][:prefetch_started] || 0}" if result[:import]
+      redirect "/portfolio?#{qs}", 302
+    rescue StandardError => e
+      warn "[fidelity reanalyze] #{e.class}: #{e.message}" unless ENV['RACK_ENV'] == 'test'
+      redirect "/portfolio?imported_error=#{URI.encode_www_form_component(e.message)}", 302
+    end
+  end
+
   # Snapshot every unsnapshotted Fidelity CSV without touching PortfolioStore
   # or quote/historical caches. Each CSV represents a past day's holdings,
   # not the current state — backfilling lets the value-over-time chart and

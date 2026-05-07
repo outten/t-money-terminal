@@ -99,7 +99,7 @@ So even with **zero keys** the dashboard, region pages, and chart will populate 
 
 ## 4. Security
 
-- **Never commit `.credentials`.** It's in `.gitignore`. Same for `data/portfolio.json`, `data/trades.json`, `data/symbols_extended.json`, `data/imports/`, `data/porfolio/fidelity/*` — all private state.
+- **Never commit `.credentials`.** It's in `.gitignore`. Same for `data/portfolio.json`, `data/trades.json`, `data/profile.json`, `data/symbols_extended.json`, `data/imports/` — all private state.
 - The `.env.example` / `.credentials.example` pattern is fine; just don't put real keys in either.
 
 ---

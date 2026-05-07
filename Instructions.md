@@ -68,7 +68,7 @@ make run                # auto-reloads on file changes → http://localhost:4567
 The app's daily workflow is built around a Fidelity CSV export.
 
 1. Log into Fidelity → **Accounts & Trade** → **Portfolio Positions** → **Download** → choose CSV.
-2. Save the file (Fidelity names it `Portfolio_Positions_<Mmm>-<DD>-<YYYY>.csv`) into `data/porfolio/fidelity/` (yes, with the typo Fidelity ships in their dir name — it's kept for compatibility).
+2. Save the file (Fidelity names it `Portfolio_Positions_<Mmm>-<DD>-<YYYY>.csv`) into `data/imports/fidelity/` — same directory the JSON snapshots live in. CSVs and snapshots are co-located in this single canonical dir.
 3. Open `/portfolio` and click **Import latest Fidelity export**.
 
 What happens:
@@ -85,9 +85,13 @@ After your second import you can visit `/portfolio/drift` to see what changed: p
 
 If you've collected a stack of `Portfolio_Positions_*.csv` files from prior days (e.g. dropping a week's worth at once after market close), `/portfolio` shows a **"Backfill N CSVs into snapshots"** button whenever there's at least one CSV without a matching JSON snapshot. Clicking it parses each pending CSV and writes the JSON snapshot — but does NOT touch your current portfolio, the quote cache, or trigger historical prefetch. Each historical CSV represents a past day's holdings, not the current state, so the importer's regular reconciliation logic stays out of the way.
 
+### Re-analyzing every Fidelity file
+
+For a heavier "rebuild everything from CSVs" pass, `/portfolio` also shows a **"Re-analyze all N Fidelity files"** button (purple, below the import + backfill buttons). Clicking it does three things in sequence: (1) force-rebuilds every JSON snapshot from its CSV, even ones that already had a snapshot — useful when Fidelity re-issues a corrected file with the same name (backfill skips those); (2) runs the regular import on the latest CSV — replaces PortfolioStore lots, primes the quote cache with broker prices, kicks off historical prefetch; (3) every analysis section on /portfolio (movers, asset-class, account-type, expense audit, value-over-time chart, sparklines) refreshes from the new snapshots on the next render. Use this when you want a single-button refresh from source-of-truth, or when something downstream looks stale.
+
 Once 2+ snapshots exist, the **value-over-time chart** at the top of `/portfolio` lights up (one data point per import, with day-over-day delta in the tooltip), and the positions table grows a **Trend column** with a small green/red sparkline per symbol showing its market-value trajectory across the snapshot history.
 
-The backfill button scans both `data/porfolio/fidelity/` (the canonical CSV input dir) and `data/imports/fidelity/` (the snapshot output dir), so dropping CSVs in either place still works.
+All Fidelity files (CSVs + JSON snapshots) live in the single dir `data/imports/fidelity/`.
 
 ---
 
